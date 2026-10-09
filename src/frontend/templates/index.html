@@ -95,7 +95,7 @@
                     <input type="date" id="date" name="date">
                 </label>
                 <label for="current_price">
-                    Current price ($, optional)
+                    Current price (CHF, optional)
                     <input type="number" step="0.01" id="current_price" name="current_price" placeholder="auto">
                 </label>
                 <label for="current_demand">
@@ -146,7 +146,7 @@
     function render(data) {
         document.getElementById('resultDate').textContent = data.date;
         document.getElementById('resultPrice').textContent =
-            '$' + Number(data.prediction_next_week_price).toFixed(2);
+            'CHF ' + Number(data.prediction_next_week_price).toFixed(2);
 
         // Chart: 7-day average -> current -> next-week forecast
         const f = data.features || {};
@@ -162,7 +162,7 @@
             data: {
                 labels: ['7-day avg', 'Current', 'Next week (forecast)'],
                 datasets: [{
-                    label: 'Price ($)',
+                    label: 'Price (CHF)',
                     data: values,
                     borderColor: '#0f766e',
                     backgroundColor: 'rgba(15,118,110,0.12)',
