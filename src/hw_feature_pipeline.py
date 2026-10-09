@@ -1,13 +1,21 @@
 """Hopsworks Feature Store pipeline for the heizoel24 oil-price data (TODO.md item 6).
 
 Builds the same feature + label dataset as `notebooks/04_feature_engineering.ipynb`
-(aggregate + real-time features + 4 target labels), registers it as an
+(aggregate + real-time features + 4 target labels) from the raw price CSV on
+S3 (written daily by src/collect_daily_prices.py; falls back to the local
+repo copy when no S3 credentials are available), registers it as an
 online-enabled feature group in Hopsworks, and creates a feature view that
 selects only the 12 features + the training label.
+
+Recent dates whose 7-day-ahead target is not known yet are stored with a NULL
+label as well, so they can be served by /predict (the training pipeline
+drops rows without a label).
 
 Run:
     python src/hw_feature_pipeline.py
 """
+
+import os
 
 import numpy as np
 import pandas as pd
@@ -26,15 +34,40 @@ from hw_config import (
 )
 
 
-def build_dataset(csv_path=None) -> pd.DataFrame:
+# Raw price data written daily by src/collect_daily_prices.py (source of truth)
+RAW_S3_URI = "s3://oilprice-features/raw/oil_data.csv"
+
+
+def load_prices() -> pd.DataFrame:
+    """Read the raw price data (date, price, demand).
+
+    Prefers the CSV written daily to S3 by src/collect_daily_prices.py (the
+    live source of truth, kept fresh by the collect-daily-prices CronJob).
+    Falls back to the repo copy baked into the image (DATA_FILE) when no S3
+    credentials are set (e.g. local dev).
+    """
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        import boto3
+        from io import BytesIO
+
+        bucket, key = RAW_S3_URI[len("s3://"):].split("/", 1)
+        s3 = boto3.client("s3")  # endpoint picked up from AWS_ENDPOINT_URL
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        print(f"Loaded raw prices from {RAW_S3_URI}")
+        return pd.read_csv(BytesIO(body))
+
+    print(f"S3 credentials not available; using local copy {DATA_FILE}")
+    return pd.read_csv(DATA_FILE)
+
+
+def build_dataset(prices: pd.DataFrame) -> pd.DataFrame:
     """Reproduce the feature engineering of 04_feature_engineering.ipynb.
 
-    Same steps as the notebook (without plots): load the raw CSV, extend to a
-    full daily calendar + forward-fill, rolling aggregates, seasonal encoding,
-    real-time features, target labels, drop NaN rows.
+    Same steps as the notebook (without plots): extend to a full daily
+    calendar + forward-fill, rolling aggregates, seasonal encoding,
+    real-time features, target labels, drop NaN feature rows.
     """
-    csv_path = csv_path or DATA_FILE
-    df = pd.read_csv(csv_path)
+    df = prices.copy()
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").drop_duplicates(subset="date").set_index("date")
 
@@ -95,14 +128,21 @@ def build_dataset(csv_path=None) -> pd.DataFrame:
     _month_avg = s["price"].groupby(s.index.to_period("M")).mean()
     s["target_next_month_price"] = (s.index.to_period("M") + 1).map(_month_avg)
 
-    # Zeilen mit NaN verwerfen (Start: 30d-Fenster + 4w-Wochentag; Ende: 7d-Ziel)
-    dataset = s[FEATURES + LABELS].dropna().reset_index()
-    print(f"Feature+Label-Datensatz: {dataset.shape}")
+    # Zeilen mit NaN in den FEATURES verwerfen (Start: 30d-Fenster + 4w-Wochentag).
+    # Die letzten ~7 Tage haben (noch) kein 7d-Ziel-Label; die Zeilen werden trotzdem
+    # gespeichert (NULL-Label), damit /predict fuer aktuelle Daten funktioniert.
+    # Das Training filtert labellose Zeilen wieder heraus (hw_training_pipeline.py).
+    dataset = s[FEATURES + LABELS].dropna(subset=FEATURES).reset_index()
+    print(
+        f"Feature+Label-Datensatz: {dataset.shape}, "
+        f"Label bekannt fuer {int(dataset[TARGET].notna().sum())} Zeilen, "
+        f"neuestes Datum: {dataset['date'].max().date()}"
+    )
     return dataset
 
 
 def main() -> int:
-    dataset = build_dataset()
+    dataset = build_dataset(load_prices())
 
     # Lokale Kopie (wie im Notebook: data/features/heizoel24_features.csv)
     FEATURES_LOCAL_CSV.parent.mkdir(parents=True, exist_ok=True)

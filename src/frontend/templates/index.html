@@ -220,7 +220,13 @@
             body: JSON.stringify(body)
         })
         .then(function (response) {
-            return response.json().then(function (data) {
+            return response.text().then(function (text) {
+                var data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = { error: text ? ('Prediction service error: ' + text) : ('Prediction failed (HTTP ' + response.status + ')') };
+                }
                 return { ok: response.ok, status: response.status, data: data };
             });
         })

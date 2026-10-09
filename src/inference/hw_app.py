@@ -98,11 +98,10 @@ def _get_fv():
 def _default_date() -> str:
     """Latest day that exists in the feature store.
 
-    The feature group only contains dates with a valid target label (the last
-    7 days of the raw data are dropped), so the latest raw-data day is NOT a
-    valid lookup date. src/hw_feature_pipeline.py writes the exact dataset it
-    upserts into the feature group to FEATURES_LOCAL_CSV, so its max date is
-    the latest date available in the feature store.
+    src/hw_feature_pipeline.py upserts the exact dataset it stores into the
+    feature group (including the most recent dates, whose target label is
+    NULL) and writes it to FEATURES_LOCAL_CSV, so its max date is the latest
+    date available for /predict.
     """
     if FEATURES_LOCAL_CSV.exists():
         dates = pd.read_csv(FEATURES_LOCAL_CSV, usecols=["date"])["date"]

@@ -84,6 +84,20 @@ def main() -> int:
     fs = project.get_feature_store()
     fv = fs.get_feature_view(FEATURE_VIEW_NAME, version=FEATURE_VIEW_VERSION)
     X_train, X_test, y_train, y_test = fv.train_test_split(test_size=TEST_SIZE)
+
+    # The feature group also holds the most recent dates whose 7-day-ahead
+    # label is NULL (stored for serving, see hw_feature_pipeline.py); rows
+    # without a label are useless for training and are dropped here.
+    def _drop_unlabeled(X: pd.DataFrame, y) -> tuple:
+        y = pd.DataFrame(y)
+        keep = y.iloc[:, 0].notna().to_numpy()
+        return X[keep], y[keep]
+
+    n_total = len(y_train) + len(y_test)
+    X_train, y_train = _drop_unlabeled(X_train, y_train)
+    X_test, y_test = _drop_unlabeled(X_test, y_test)
+    print(f"train_test_split: {n_total} rows, dropped {n_total - len(y_train) - len(y_test)} rows without a label")
+
     X_train, X_test = encode_features(X_train), encode_features(X_test)
     print(f"X_train: {X_train.shape} | X_test: {X_test.shape}")
 

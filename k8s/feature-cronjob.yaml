@@ -49,4 +49,17 @@ spec:
                   key: HOPSWORKS_API_KEY
             - name: HOPSWORKS_ENGINE
               value: "python"
+            # S3 (rook-ceph): fresh raw prices written by collect-daily-prices
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: aws_access_key_id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: aws_secret_access_key
+            - name: AWS_ENDPOINT_URL
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:8080
           restartPolicy: OnFailure
