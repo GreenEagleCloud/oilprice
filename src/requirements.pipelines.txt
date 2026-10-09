@@ -2,10 +2,12 @@ pandas==2.2.3
 numpy
 scikit-learn==1.9.1
 mlflow==3.16.1
-boto3
+boto3==1.41.5
+aiobotocore==2.26.0
 joblib
 requests
 s3fs==2025.10.0
+fsspec==2025.10.0
 pyarrow
 python-dotenv>=1.2.4
 # Hopsworks SDK (Feature Store + Model Registry)
