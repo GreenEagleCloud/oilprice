@@ -15,6 +15,7 @@ spec:
           containers:
           - name: collect-daily-prices
             image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.0
+            imagePullPolicy: Always
             command: ["python", "src/collect_daily_prices.py"]
             securityContext:
               allowPrivilegeEscalation: false

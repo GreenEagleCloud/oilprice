@@ -14,6 +14,7 @@ spec:
           containers:
           - name: feature-pipeline
             image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.0
+            imagePullPolicy: Always
             command: ["python", "src/hw_feature_pipeline.py"]
             securityContext:
               allowPrivilegeEscalation: false

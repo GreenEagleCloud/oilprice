@@ -14,6 +14,7 @@ spec:
           containers:
           - name: training-pipeline
             image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.0
+            imagePullPolicy: Always
             command: ["python", "src/hw_training_pipeline.py"]
             securityContext:
               allowPrivilegeEscalation: false

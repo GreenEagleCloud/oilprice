@@ -5,5 +5,7 @@ joblib
 requests
 python-dotenv>=1.2.4
 pandas==2.2.3
+# sklearn is needed to unpickle the trained model (Pipeline + RandomForest)
+scikit-learn==1.9.1
 # Hopsworks SDK (Feature Store online feature vector + Model Registry)
 hopsworks[python]==5.1.1

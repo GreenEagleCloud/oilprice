@@ -18,6 +18,7 @@ spec:
       containers:
       - name: frontend
         image: ghcr.io/greeneaglecloud/oilprice-frontend:1.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
         securityContext:

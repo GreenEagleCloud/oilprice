@@ -18,6 +18,7 @@ spec:
       containers:
       - name: inference
         image: ghcr.io/greeneaglecloud/oilprice-inference:1.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
         securityContext:
