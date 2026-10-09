@@ -1,54 +1,245 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Oil Price Prediction</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #f4f6f8;
+            --card: #ffffff;
+            --ink: #1f2933;
+            --muted: #6b7280;
+            --accent: #0f766e;
+            --accent-ink: #ffffff;
+            --line: #e5e7eb;
+            --error: #b91c1c;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--ink);
+            line-height: 1.5;
+        }
+        .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+        h1 { font-size: 1.7rem; margin: 0 0 4px; }
+        .subtitle { color: var(--muted); margin: 0 0 24px; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 20px 22px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+        form .row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+        label { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; color: var(--muted); }
+        input {
+            font: inherit;
+            padding: 8px 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+            color: var(--ink);
+            min-width: 150px;
+        }
+        button {
+            font: inherit;
+            cursor: pointer;
+            background: var(--accent);
+            color: var(--accent-ink);
+            border: none;
+            border-radius: 8px;
+            padding: 10px 18px;
+            font-weight: 600;
+        }
+        button:disabled { opacity: 0.6; cursor: default; }
+        .status { margin-left: 12px; color: var(--muted); font-size: 0.9rem; }
+        .result { margin-top: 22px; display: none; }
+        .result.show { display: block; }
+        .result-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+        .result-date { color: var(--muted); font-size: 0.95rem; }
+        .price { font-size: 2.2rem; font-weight: 700; color: var(--accent); }
+        .chart-box { margin: 14px 0 4px; }
+        h3 { font-size: 1rem; margin: 20px 0 8px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+        th { color: var(--muted); font-weight: 600; }
+        td.val { font-variant-numeric: tabular-nums; text-align: right; }
+        .error {
+            margin-top: 16px;
+            display: none;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: var(--error);
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-size: 0.95rem;
+        }
+        .error.show { display: block; }
+        .hint { color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+    </style>
 </head>
 <body>
+<div class="wrap">
     <h1>Oil Price Prediction</h1>
-    <form id="predictionForm">
-        <label for="current_price">Current Price:</label>
-        <input type="number" id="current_price" name="current_price" required>
-        <button type="submit">Predict</button>
-    </form>
-    <canvas id="predictionChart" width="400" height="200"></canvas>
+    <p class="subtitle">Next-week oil price forecast from the Hopsworks model. Leave fields blank to use the latest available data.</p>
 
-    <script>
-        document.getElementById('predictionForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const currentPrice = document.getElementById('current_price').value;
-            fetch('/predict', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ current_price: parseFloat(currentPrice) })
-            })
-            .then(response => response.json())
-            .then(data => {
-                const prediction = data.prediction;
-                const ctx = document.getElementById('predictionChart').getContext('2d');
-                // Clear previous chart if exists
-                if (window.chart) window.chart.destroy();
-                window.chart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: ['Today', 'Tomorrow'],
-                        datasets: [{
-                            label: 'Price',
-                            data: [currentPrice, prediction],
-                            borderColor: 'rgb(75, 192, 192)',
-                            tension: 0.1
-                        }]
-                    },
-                    options: {
-                        scales: {
-                            y: {
-                                beginAtZero: false
-                            }
-                        }
-                    }
-                });
-            });
+    <div class="card">
+        <form id="predictionForm">
+            <div class="row">
+                <label for="date">
+                    Date (optional)
+                    <input type="date" id="date" name="date">
+                </label>
+                <label for="current_price">
+                    Current price ($, optional)
+                    <input type="number" step="0.01" id="current_price" name="current_price" placeholder="auto">
+                </label>
+                <label for="current_demand">
+                    Current demand (optional)
+                    <input type="number" step="0.01" id="current_demand" name="current_demand" placeholder="auto">
+                </label>
+            </div>
+            <button type="submit" id="submitBtn">Predict</button>
+            <span class="status" id="status"></span>
+        </form>
+        <p class="hint">The model predicts the price for the week following the given date, using stored features plus any live values you provide.</p>
+    </div>
+
+    <div class="error" id="error"></div>
+
+    <div class="result" id="result">
+        <div class="card">
+            <div class="result-head">
+                <span class="result-date">Input date: <strong id="resultDate"></strong></span>
+                <span class="price" id="resultPrice"></span>
+                <span class="result-date">predicted next-week price</span>
+            </div>
+            <div class="chart-box">
+                <canvas id="predictionChart" height="120"></canvas>
+            </div>
+            <h3>Features used by the model</h3>
+            <table id="featureTable">
+                <thead>
+                    <tr><th>Feature</th><th style="text-align:right">Value</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+    let chart = null;
+
+    function formatValue(v) {
+        if (v === null || v === undefined) return '—';
+        if (typeof v === 'number') {
+            if (Math.abs(v) >= 100) return v.toFixed(2);
+            return parseFloat(v.toFixed(4)).toString();
+        }
+        return String(v);
+    }
+
+    function render(data) {
+        document.getElementById('resultDate').textContent = data.date;
+        document.getElementById('resultPrice').textContent =
+            '$' + Number(data.prediction_next_week_price).toFixed(2);
+
+        // Chart: 7-day average -> current -> next-week forecast
+        const f = data.features || {};
+        const values = [
+            f.price_mean_7d != null ? Number(f.price_mean_7d) : null,
+            f.current_price != null ? Number(f.current_price) : null,
+            Number(data.prediction_next_week_price)
+        ];
+        if (chart) chart.destroy();
+        const ctx = document.getElementById('predictionChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['7-day avg', 'Current', 'Next week (forecast)'],
+                datasets: [{
+                    label: 'Price ($)',
+                    data: values,
+                    borderColor: '#0f766e',
+                    backgroundColor: 'rgba(15,118,110,0.12)',
+                    tension: 0.2,
+                    spanGaps: true,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: false } }
+            }
         });
-    </script>
+
+        // Feature table
+        const tbody = document.querySelector('#featureTable tbody');
+        tbody.innerHTML = '';
+        Object.keys(f).forEach(function (key) {
+            const tr = document.createElement('tr');
+            const tdName = document.createElement('td');
+            tdName.textContent = key;
+            const tdVal = document.createElement('td');
+            tdVal.className = 'val';
+            tdVal.textContent = formatValue(f[key]);
+            tr.appendChild(tdName);
+            tr.appendChild(tdVal);
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('result').classList.add('show');
+    }
+
+    document.getElementById('predictionForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const errorEl = document.getElementById('error');
+        const statusEl = document.getElementById('status');
+        const btn = document.getElementById('submitBtn');
+        errorEl.classList.remove('show');
+        errorEl.textContent = '';
+        statusEl.textContent = 'Predicting…';
+        btn.disabled = true;
+
+        const body = {};
+        const d = document.getElementById('date').value;
+        const cp = parseFloat(document.getElementById('current_price').value);
+        const cd = parseFloat(document.getElementById('current_demand').value);
+        if (d) body.date = d;
+        if (!isNaN(cp)) body.current_price = cp;
+        if (!isNaN(cd)) body.current_demand = cd;
+
+        fetch('/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+        .then(function (response) {
+            return response.json().then(function (data) {
+                return { ok: response.ok, status: response.status, data: data };
+            });
+        })
+        .then(function (res) {
+            if (!res.ok || res.data.error) {
+                throw new Error(res.data.error || 'Prediction failed (HTTP ' + res.status + ')');
+            }
+            render(res.data);
+        })
+        .catch(function (err) {
+            errorEl.textContent = err.message || String(err);
+            errorEl.classList.add('show');
+            document.getElementById('result').classList.remove('show');
+        })
+        .finally(function () {
+            statusEl.textContent = '';
+            btn.disabled = false;
+        });
+    });
+</script>
 </body>
 </html>

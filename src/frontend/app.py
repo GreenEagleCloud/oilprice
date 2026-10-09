@@ -1,10 +1,12 @@
+import os
 from flask import Flask, render_template, request, jsonify
 import requests
 
 app = Flask(__name__)
 
-# Backend service URL (assuming it's in the same namespace)
-BACKEND_URL = "http://inference-service:5000/predict"
+# Backend service URL (overridable via the BACKEND_URL env var, set in the
+# k8s frontend deployment). Defaults to the in-cluster inference service.
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://inference-service:5000/predict")
 
 @app.route('/')
 def home():
