@@ -5,7 +5,7 @@ mlflow==3.16.1
 boto3
 joblib
 requests
-s3fs>=2025.0
+s3fs==2025.10.0
 pyarrow
 python-dotenv>=1.2.4
 # Hopsworks SDK (Feature Store + Model Registry)
