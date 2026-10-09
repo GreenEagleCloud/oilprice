@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Oil Price Prediction</title>
+    <title>Heizölpreis Prognose für die Schweiz</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -45,16 +45,19 @@
         .brand { display: flex; align-items: center; gap: 12px; }
         .brand-logo { width: 46px; height: 46px; }
         .brand h1 { font-size: 1.35rem; margin: 0; color: var(--ink); }
-        .powered {
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        .powered-footer {
+            position: fixed;
+            bottom: 10px;
+            right: 14px;
             color: var(--muted);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
+            z-index: 10;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 2px 10px;
+            border-radius: 8px;
         }
-        .powered-logo { width: 26px; height: 26px; }
-        .powered a { color: var(--accent); font-weight: 700; text-decoration: none; }
-        .powered a:hover { text-decoration: underline; }
+        .powered-footer a { color: var(--accent); font-weight: 700; text-decoration: none; }
+        .powered-footer a:hover { text-decoration: underline; }
         .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
         h1 { font-size: 1.7rem; margin: 0 0 4px; }
         .subtitle { color: var(--muted); margin: 0 0 24px; }
@@ -146,58 +149,54 @@
 <header class="brandbar">
     <div class="brandbar-inner">
         <div class="brand">
-            <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="greenEagle logo">
-            <h1>Oil Price Prediction</h1>
-        </div>
-        <div class="powered">
-            <img class="powered-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="">
-            <span>Powered by <a href="https://www.greeneagle.ai" target="_blank" rel="noopener">greeneagle.ai</a></span>
+            <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="GreenEagle-Logo">
+            <h1>Heizölpreis Prognose für die Schweiz</h1>
         </div>
     </div>
 </header>
 <div class="wrap">
-    <p class="subtitle">Heizöl prices for Switzerland: history and next-week forecast from the Hopsworks model. Leave fields blank to use the latest available data.</p>
+    <p class="subtitle">Heizölpreise für die Schweiz: Historie und Prognose für die kommende Woche auf Basis des Hopsworks-Modells. Lassen Sie die Felder leer, um die jeweils letzten verfügbaren Daten zu verwenden.</p>
 
     <div class="card">
         <div class="chart-head">
-            <h2>Price &amp; demand history (CH)</h2>
+            <h2>Preis- und Nachfragengeschichte (CH)</h2>
             <span class="latest" id="latestInfo"></span>
-            <select class="tf-select" id="timeframe" aria-label="Timeframe">
-                <option value="30">1 month</option>
-                <option value="90">3 months</option>
-                <option value="180">6 months</option>
-                <option value="365" selected>1 year</option>
-                <option value="1825">5 years</option>
-                <option value="all">All</option>
+            <select class="tf-select" id="timeframe" aria-label="Zeitraum">
+                <option value="30">1 Monat</option>
+                <option value="90">3 Monate</option>
+                <option value="180">6 Monate</option>
+                <option value="365" selected>1 Jahr</option>
+                <option value="1825">5 Jahre</option>
+                <option value="all">Alle</option>
             </select>
         </div>
         <div class="history-box">
             <canvas id="historyChart" height="260"></canvas>
-            <div class="history-hint" id="historyHint">Loading price history&hellip;</div>
+            <div class="history-hint" id="historyHint">Historische Preise werden geladen&hellip;</div>
         </div>
-        <p class="hint">Daily average price (CHF/100l) and demand index from heizoel24.ch.</p>
+        <p class="hint">Tagesdurchschnittspreis (CHF/100l) und Nachfrageindex von heizoel24.ch.</p>
     </div>
 
     <div class="card">
         <form id="predictionForm">
             <div class="row">
                 <label for="date">
-                    Date (optional)
+                    Datum (optional)
                     <input type="date" id="date" name="date">
                 </label>
                 <label for="current_price">
-                    Current price (CHF, optional)
-                    <input type="number" step="0.01" id="current_price" name="current_price" placeholder="auto">
+                    Aktueller Preis (CHF, optional)
+                    <input type="number" step="0.01" id="current_price" name="current_price" placeholder="automatisch">
                 </label>
                 <label for="current_demand">
-                    Current demand (optional)
-                    <input type="number" step="0.01" id="current_demand" name="current_demand" placeholder="auto">
+                    Aktuelle Nachfrage (optional)
+                    <input type="number" step="0.01" id="current_demand" name="current_demand" placeholder="automatisch">
                 </label>
             </div>
-            <button type="submit" id="submitBtn">Predict</button>
+            <button type="submit" id="submitBtn">Prognose erstellen</button>
             <span class="status" id="status"></span>
         </form>
-        <p class="hint">The model predicts the price for the week following the given date, using stored features plus any live values you provide.</p>
+        <p class="hint">Das Modell prognostiziert den Preis für die Woche nach dem angegebenen Datum, basierend auf gespeicherten Merkmalen sowie ggf. von Ihnen angegebenen Werten.</p>
     </div>
 
     <div class="error" id="error"></div>
@@ -205,25 +204,28 @@
     <div class="result" id="result">
         <div class="card">
             <div class="result-head">
-                <span class="result-date">Input date: <strong id="resultDate"></strong></span>
+                <span class="result-date">Eingabedatum: <strong id="resultDate"></strong></span>
                 <span class="price" id="resultPrice"></span>
-                <span class="result-date">predicted next-week price</span>
+                <span class="result-date">prognostizierter Preis für die nächste Woche</span>
             </div>
             <div class="chart-box">
                 <canvas id="predictionChart" height="120"></canvas>
             </div>
-            <h3>Features used by the model</h3>
+            <h3>Vom Modell verwendete Merkmale</h3>
             <table id="featureTable">
                 <thead>
-                    <tr><th>Feature</th><th style="text-align:right">Value</th></tr>
+                    <tr><th>Merkmal</th><th style="text-align:right">Wert</th></tr>
                 </thead>
                 <tbody></tbody>
             </table>
         </div>
     </div>
 </div>
+<footer class="powered-footer">
+    <span>Bereitgestellt von <a href="https://www.greeneagle.ai" target="_blank" rel="noopener">greeneagle.ai</a></span>
+</footer>
 <script>
-    // ---------- Price & demand history chart ----------
+    // ---------- Preis- und Nachfrage-Diagramm ----------
     let historyData = null;
     let historyChart = null;
 
@@ -263,7 +265,7 @@
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Price (CHF/100l)',
+                        label: 'Preis (CHF/100l)',
                         data: prices,
                         borderColor: '#38f75c',
                         backgroundColor: 'rgba(56,247,92,0.10)',
@@ -276,7 +278,7 @@
                         yAxisID: 'y'
                     },
                     {
-                        label: 'Demand index',
+                        label: 'Nachfrageindex',
                         data: demands,
                         borderColor: '#066aab',
                         borderWidth: 1.5,
@@ -318,7 +320,7 @@
                     y1: {
                         position: 'right',
                         beginAtZero: true,
-                        title: { display: true, text: 'Demand' },
+                        title: { display: true, text: 'Nachfrage' },
                         grid: { drawOnChartArea: false }
                     }
                 }
@@ -329,7 +331,7 @@
         while (li > 0 && historyData.price[li] === null) li--;
         const latest = historyData.price[li];
         document.getElementById('latestInfo').textContent =
-            (latest === null || latest === undefined) ? '' : 'Latest: ' + latest.toFixed(2) + ' CHF (' + dates[li] + ')';
+            (latest === null || latest === undefined) ? '' : 'Aktuell: ' + latest.toFixed(2) + ' CHF (' + dates[li] + ')';
     }
 
     function loadHistory() {
@@ -345,14 +347,14 @@
             })
             .catch(function (err) {
                 document.getElementById('historyHint').textContent =
-                    'Could not load price history (' + (err.message || err) + ')';
+                    'Preisgeschichte konnte nicht geladen werden (' + (err.message || err) + ')';
             });
     }
 
     document.getElementById('timeframe').addEventListener('change', renderHistory);
     loadHistory();
 
-    // ---------- Prediction form ----------
+    // ---------- Prognose-Formular ----------
     let chart = null;
 
     function formatValue(v) {
@@ -369,7 +371,7 @@
         document.getElementById('resultPrice').textContent =
             'CHF ' + Number(data.prediction_next_week_price).toFixed(2);
 
-        // Chart: 7-day average -> current -> next-week forecast
+        // Diagramm: 7-Tage-Durchschnitt -> aktuell -> Vorhersage für nächste Woche
         const f = data.features || {};
         const values = [
             f.price_mean_7d != null ? Number(f.price_mean_7d) : null,
@@ -381,9 +383,9 @@
         chart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: ['7-day avg', 'Current', 'Next week (forecast)'],
+                labels: ['7-Tage-Durchschnitt', 'Aktuell', 'Nächste Woche (Prognose)'],
                 datasets: [{
-                    label: 'Price (CHF)',
+                    label: 'Preis (CHF)',
                     data: values,
                     borderColor: '#38f75c',
                     backgroundColor: 'rgba(56,247,92,0.15)',
@@ -399,7 +401,7 @@
             }
         });
 
-        // Feature table
+        // Merkmalstabelle
         const tbody = document.querySelector('#featureTable tbody');
         tbody.innerHTML = '';
         Object.keys(f).forEach(function (key) {
@@ -424,7 +426,7 @@
         const btn = document.getElementById('submitBtn');
         errorEl.classList.remove('show');
         errorEl.textContent = '';
-        statusEl.textContent = 'Predicting…';
+        statusEl.textContent = 'Prognose wird erstellt…';
         btn.disabled = true;
 
         const body = {};
@@ -446,14 +448,14 @@
                 try {
                     data = JSON.parse(text);
                 } catch (e) {
-                    data = { error: text ? ('Prediction service error: ' + text) : ('Prediction failed (HTTP ' + response.status + ')') };
+                    data = { error: text ? ('Fehler im Prognosedienst: ' + text) : ('Prognose fehlgeschlagen (HTTP ' + response.status + ')') };
                 }
                 return { ok: response.ok, status: response.status, data: data };
             });
         })
         .then(function (res) {
             if (!res.ok || res.data.error) {
-                throw new Error(res.data.error || 'Prediction failed (HTTP ' + res.status + ')');
+                throw new Error(res.data.error || 'Prognose fehlgeschlagen (HTTP ' + res.status + ')');
             }
             render(res.data);
         })
