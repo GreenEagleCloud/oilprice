@@ -7,6 +7,8 @@ COPY src/frontend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/frontend .
+# fallback price data (used when S3 credentials/env are not configured)
+COPY data/ /app/data/
 
 ENV PYTHONPATH=/app
 

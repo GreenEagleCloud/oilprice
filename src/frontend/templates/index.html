@@ -4,16 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Oil Price Prediction</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
-            --bg: #f4f6f8;
+            --bg: #f8f9fb;
             --card: #ffffff;
-            --ink: #1f2933;
-            --muted: #6b7280;
-            --accent: #0f766e;
+            --ink: #222f3e;
+            --muted: #5c6b7a;
+            --accent: #066aab;
             --accent-ink: #ffffff;
-            --line: #e5e7eb;
+            --green: #38f75c;
+            --red: #ec5146;
+            --line: #e3e7ec;
             --error: #b91c1c;
         }
         * { box-sizing: border-box; }
@@ -24,9 +27,66 @@
             color: var(--ink);
             line-height: 1.5;
         }
+        .brandbar {
+            background: var(--card);
+            border-bottom: 3px solid var(--green);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .brandbar-inner {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand-logo { width: 46px; height: 46px; }
+        .brand h1 { font-size: 1.35rem; margin: 0; color: var(--ink); }
+        .powered {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        .powered-logo { width: 26px; height: 26px; }
+        .powered a { color: var(--accent); font-weight: 700; text-decoration: none; }
+        .powered a:hover { text-decoration: underline; }
         .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
         h1 { font-size: 1.7rem; margin: 0 0 4px; }
         .subtitle { color: var(--muted); margin: 0 0 24px; }
+        .chart-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .chart-head h2 { font-size: 1.05rem; margin: 0; color: var(--ink); }
+        .chart-head .latest { color: var(--muted); font-size: 0.85rem; margin-right: 10px; }
+        .tf-select {
+            font: inherit;
+            font-size: 0.85rem;
+            padding: 6px 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+            color: var(--ink);
+        }
+        .history-box { position: relative; }
+        .history-hint {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
         .card {
             background: var(--card);
             border: 1px solid var(--line);
@@ -83,9 +143,40 @@
     </style>
 </head>
 <body>
+<header class="brandbar">
+    <div class="brandbar-inner">
+        <div class="brand">
+            <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="greenEagle logo">
+            <h1>Oil Price Prediction</h1>
+        </div>
+        <div class="powered">
+            <img class="powered-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="">
+            <span>Powered by <a href="https://www.greeneagle.ai" target="_blank" rel="noopener">greeneagle.ai</a></span>
+        </div>
+    </div>
+</header>
 <div class="wrap">
-    <h1>Oil Price Prediction</h1>
-    <p class="subtitle">Next-week oil price forecast from the Hopsworks model. Leave fields blank to use the latest available data.</p>
+    <p class="subtitle">Heizöl prices for Switzerland: history and next-week forecast from the Hopsworks model. Leave fields blank to use the latest available data.</p>
+
+    <div class="card">
+        <div class="chart-head">
+            <h2>Price &amp; demand history (CH)</h2>
+            <span class="latest" id="latestInfo"></span>
+            <select class="tf-select" id="timeframe" aria-label="Timeframe">
+                <option value="30">1 month</option>
+                <option value="90">3 months</option>
+                <option value="180">6 months</option>
+                <option value="365" selected>1 year</option>
+                <option value="1825">5 years</option>
+                <option value="all">All</option>
+            </select>
+        </div>
+        <div class="history-box">
+            <canvas id="historyChart" height="260"></canvas>
+            <div class="history-hint" id="historyHint">Loading price history&hellip;</div>
+        </div>
+        <p class="hint">Daily average price (CHF/100l) and demand index from heizoel24.ch.</p>
+    </div>
 
     <div class="card">
         <form id="predictionForm">
@@ -132,6 +223,136 @@
     </div>
 </div>
 <script>
+    // ---------- Price & demand history chart ----------
+    let historyData = null;
+    let historyChart = null;
+
+    function thinIndices(n, max) {
+        if (n <= max) return null;
+        const stride = Math.ceil(n / max);
+        const idx = [];
+        for (let i = 0; i < n; i += stride) idx.push(i);
+        if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+        return idx;
+    }
+
+    function renderHistory() {
+        if (!historyData || !historyData.dates || !historyData.dates.length) return;
+        const dates = historyData.dates;
+        const tf = document.getElementById('timeframe').value;
+        let start = 0;
+        if (tf !== 'all') {
+            const end = new Date(dates[dates.length - 1]);
+            const from = new Date(end);
+            from.setDate(from.getDate() - parseInt(tf, 10));
+            while (start < dates.length && new Date(dates[start]) < from) start++;
+        }
+        const thin = thinIndices(dates.length - start, 1500);
+        const pick = (arr) => thin
+            ? thin.map(function (i) { return arr[start + i]; })
+            : arr.slice(start);
+        const labels = pick(dates);
+        const prices = pick(historyData.price);
+        const demands = pick(historyData.demand);
+
+        if (historyChart) historyChart.destroy();
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        historyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Price (CHF/100l)',
+                        data: prices,
+                        borderColor: '#38f75c',
+                        backgroundColor: 'rgba(56,247,92,0.10)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        tension: 0.15,
+                        spanGaps: true,
+                        fill: true,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Demand index',
+                        data: demands,
+                        borderColor: '#066aab',
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        tension: 0.15,
+                        spanGaps: true,
+                        fill: false,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function (item) {
+                                const v = item.parsed.y;
+                                return (v === null || v === undefined)
+                                    ? item.dataset.label + ': -'
+                                    : item.dataset.label + ': ' + Number(v).toFixed(2);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 },
+                        grid: { display: false }
+                    },
+                    y: {
+                        position: 'left',
+                        beginAtZero: false,
+                        title: { display: true, text: 'CHF/100l' }
+                    },
+                    y1: {
+                        position: 'right',
+                        beginAtZero: true,
+                        title: { display: true, text: 'Demand' },
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
+
+        let li = dates.length - 1;
+        while (li > 0 && historyData.price[li] === null) li--;
+        const latest = historyData.price[li];
+        document.getElementById('latestInfo').textContent =
+            (latest === null || latest === undefined) ? '' : 'Latest: ' + latest.toFixed(2) + ' CHF (' + dates[li] + ')';
+    }
+
+    function loadHistory() {
+        fetch('/api/history')
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (data) {
+                historyData = data;
+                renderHistory();
+                document.getElementById('historyHint').style.display = 'none';
+            })
+            .catch(function (err) {
+                document.getElementById('historyHint').textContent =
+                    'Could not load price history (' + (err.message || err) + ')';
+            });
+    }
+
+    document.getElementById('timeframe').addEventListener('change', renderHistory);
+    loadHistory();
+
+    // ---------- Prediction form ----------
     let chart = null;
 
     function formatValue(v) {
@@ -164,8 +385,8 @@
                 datasets: [{
                     label: 'Price (CHF)',
                     data: values,
-                    borderColor: '#0f766e',
-                    backgroundColor: 'rgba(15,118,110,0.12)',
+                    borderColor: '#38f75c',
+                    backgroundColor: 'rgba(56,247,92,0.15)',
                     tension: 0.2,
                     spanGaps: true,
                     pointRadius: 4
