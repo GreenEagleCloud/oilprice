@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Oil Price Prediction</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Oil Price Prediction</h1>
+    <form id="predictionForm">
+        <label for="current_price">Current Price:</label>
+        <input type="number" id="current_price" name="current_price" required>
+        <button type="submit">Predict</button>
+    </form>
+    <canvas id="predictionChart" width="400" height="200"></canvas>
+
+    <script>
+        document.getElementById('predictionForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const currentPrice = document.getElementById('current_price').value;
+            fetch('/predict', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ current_price: parseFloat(currentPrice) })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const prediction = data.prediction;
+                const ctx = document.getElementById('predictionChart').getContext('2d');
+                // Clear previous chart if exists
+                if (window.chart) window.chart.destroy();
+                window.chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['Today', 'Tomorrow'],
+                        datasets: [{
+                            label: 'Price',
+                            data: [currentPrice, prediction],
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: false
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

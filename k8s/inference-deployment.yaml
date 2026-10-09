@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference
+  namespace: oilprice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference
+  template:
+    metadata:
+      labels:
+        app: inference
+    spec:
+      imagePullSecrets:
+      - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+      containers:
+      - name: inference
+        image: ghcr.io/greeneaglecloud/oilprice-inference:1.0
+        ports:
+        - containerPort: 5000
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        env:
+        # Hopsworks (Feature Store online feature vector + Model Registry)
+        - name: HOPSWORKS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-credentials
+              key: HOPSWORKS_HOST
+        - name: HOPSWORKS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-credentials
+              key: HOPSWORKS_PORT
+        - name: HOPSWORKS_PROJECT
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-credentials
+              key: HOPSWORKS_PROJECT
+        - name: HOPSWORKS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-credentials
+              key: HOPSWORKS_API_KEY
+        - name: HOPSWORKS_ENGINE
+          value: "python"
+        # S3 fallback for model loading (rook-ceph object storage)
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: aws_access_key_id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: aws_secret_access_key
+        - name: AWS_ENDPOINT_URL
+          value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:8080

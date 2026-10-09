@@ -1,0 +1,26 @@
+# Hopsworks inference service (src/inference/hw_app.py, TODO.md item 8)
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# --- dependencies ------------------------------------------------------------
+COPY src/inference/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# --- application code ----------------------------------------------------------
+# Full src/ tree: hw_app.py imports hw_config from src/
+COPY src /app/src
+# Local feature CSV (mirror of the training data) used for the category-code
+# mapping of non-numeric features in hw_app.py
+COPY data /app/data
+
+# hw_app lives in src/inference/; make it importable for gunicorn
+ENV PYTHONPATH=/app/src/inference
+
+# run as a dedicated non-root user (see k8s securityContext runAsNonRoot)
+RUN useradd -m appuser && chown -R appuser /app
+USER appuser
+
+EXPOSE 5000
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "hw_app:app"]

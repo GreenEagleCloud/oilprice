@@ -1,0 +1,204 @@
+# ---------------------------------------------------------------------------
+# Kaniko build jobs (build inside the cluster, no Docker daemon required)
+#
+# Each job:
+#   1. init container clones the repo (depth 1) from GitHub into an emptyDir
+#   2. kaniko executor builds one Dockerfile and pushes the image to GHCR
+#
+# Push auth: the existing ghcr dockerconfigjson secret is mounted at
+# /kaniko/.docker/config.json (kaniko's default location).
+# Git clone auth: secret "git-credentials" (key: url, full clone URL incl. token)
+#
+#   kubectl apply -f k8s/kaniko-build-jobs.yaml
+#   kubectl -n oilprice get jobs -l purpose=kaniko-build -w
+#   kubectl -n oilprice logs -f job/kaniko-build-frontend
+#   # cleanup: kubectl -n oilprice delete jobs -l purpose=kaniko-build
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kaniko-build-frontend
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: kaniko-build
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: oilprice
+        purpose: kaniko-build
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+      initContainers:
+      - name: clone
+        image: alpine/git:2.49.1
+        command: ["git", "clone", "--depth=1", "$(CLONE_URL)", "/workspace"]
+        env:
+        - name: CLONE_URL
+          valueFrom:
+            secretKeyRef:
+              name: git-credentials
+              key: url
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      containers:
+      - name: build
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+        - --context=dir:///workspace
+        - --dockerfile=Dockerfile.frontend
+        - --destination=ghcr.io/greeneaglecloud/oilprice-frontend:1.0
+        - --verbosity=info
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            memory: 8Gi
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: dockerconfig
+          mountPath: /kaniko/.docker
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      - name: dockerconfig
+        secret:
+          secretName: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+          items:
+          - key: .dockerconfigjson
+            path: config.json
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kaniko-build-inference
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: kaniko-build
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: oilprice
+        purpose: kaniko-build
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+      initContainers:
+      - name: clone
+        image: alpine/git:2.49.1
+        command: ["git", "clone", "--depth=1", "$(CLONE_URL)", "/workspace"]
+        env:
+        - name: CLONE_URL
+          valueFrom:
+            secretKeyRef:
+              name: git-credentials
+              key: url
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      containers:
+      - name: build
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+        - --context=dir:///workspace
+        - --dockerfile=Dockerfile.inference
+        - --destination=ghcr.io/greeneaglecloud/oilprice-inference:1.0
+        - --verbosity=info
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            memory: 8Gi
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: dockerconfig
+          mountPath: /kaniko/.docker
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      - name: dockerconfig
+        secret:
+          secretName: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+          items:
+          - key: .dockerconfigjson
+            path: config.json
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kaniko-build-pipelines
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: kaniko-build
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: oilprice
+        purpose: kaniko-build
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+      initContainers:
+      - name: clone
+        image: alpine/git:2.49.1
+        command: ["git", "clone", "--depth=1", "$(CLONE_URL)", "/workspace"]
+        env:
+        - name: CLONE_URL
+          valueFrom:
+            secretKeyRef:
+              name: git-credentials
+              key: url
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      containers:
+      - name: build
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+        - --context=dir:///workspace
+        - --dockerfile=Dockerfile.pipelines
+        - --destination=ghcr.io/greeneaglecloud/oilprice-pipelines:1.0
+        - --verbosity=info
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            memory: 8Gi
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: dockerconfig
+          mountPath: /kaniko/.docker
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      - name: dockerconfig
+        secret:
+          secretName: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+          items:
+          - key: .dockerconfigjson
+            path: config.json

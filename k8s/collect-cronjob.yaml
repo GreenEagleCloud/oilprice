@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collect-daily-prices
+  namespace: oilprice
+spec:
+  # daily at 23:30, before the feature pipeline (00:00) and training pipeline (01:00)
+  schedule: "30 23 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+          - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
+          containers:
+          - name: collect-daily-prices
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.0
+            command: ["python", "src/collect_daily_prices.py"]
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+              runAsNonRoot: true
+              seccompProfile:
+                type: RuntimeDefault
+            env:
+            # S3 (rook-ceph object storage): raw price data upload
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: aws_access_key_id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: aws_secret_access_key
+            - name: AWS_ENDPOINT_URL
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:8080
+          restartPolicy: OnFailure

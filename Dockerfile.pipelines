@@ -1,0 +1,22 @@
+# Hopsworks pipelines: feature store + training + daily price collection
+# (src/hw_feature_pipeline.py, src/hw_training_pipeline.py, src/collect_daily_prices.py)
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# --- dependencies ------------------------------------------------------------
+COPY src/requirements.pipelines.txt .
+RUN pip install --no-cache-dir -r requirements.pipelines.txt
+
+# --- application code ----------------------------------------------------------
+# Full src/ tree (hw_training_pipeline imports training_pipeline) and the raw
+# data directory (DATA_FILE for the feature pipeline)
+COPY src /app/src
+COPY data /app/data
+
+# run as a dedicated non-root user (see k8s securityContext runAsNonRoot)
+RUN useradd -m appuser && chown -R appuser /app
+USER appuser
+
+# Default: Hopsworks feature pipeline; k8s cron jobs override the command
+CMD ["python", "src/hw_feature_pipeline.py"]

@@ -1,0 +1,9 @@
+.git
+.venv
+.coder
+notebooks
+**/__pycache__
+*.pyc
+.env
+.env.example
+*.ipynb

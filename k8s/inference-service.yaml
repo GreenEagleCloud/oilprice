@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-service
+  namespace: oilprice
+spec:
+  selector:
+    app: inference
+  ports:
+  - port: 5000
+    targetPort: 5000

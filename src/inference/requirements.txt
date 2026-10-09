@@ -1,0 +1,9 @@
+flask
+gunicorn
+boto3
+joblib
+requests
+python-dotenv>=1.2.4
+pandas==2.2.3
+# Hopsworks SDK (Feature Store online feature vector + Model Registry)
+hopsworks[python]==5.1.1

@@ -1,0 +1,16 @@
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: oilprice-allow-coder-routes
+  namespace: oilprice
+  labels:
+    app.kubernetes.io/name: oilprice
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: coder
+  to:
+  - group: ""
+    kind: Service
+    name: frontend-service

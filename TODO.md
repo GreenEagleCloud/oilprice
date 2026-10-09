@@ -51,11 +51,11 @@ https://eu-west.cloud.hopsworks.ai/p/44166/view
 
 #### 1. Feature Pipeline
 
-- [ ] 1. Rohdaten via API von der Quelle abrufen
-- [ ] 2. Features engineeren (Rolling Windows, Aggregationen)
-- [ ] 3. Dataframe mit Features und Label erstellen
-- [ ] 4. Feature Group erstellen mit Primary Key + Event Time
-- [ ] 5. Dataframe in die Feature Group einfügen
+- [x] 1. Rohdaten via API von der Quelle abrufen
+- [x] 2. Features engineeren (Rolling Windows, Aggregationen)
+- [x] 3. Dataframe mit Features und Label erstellen
+- [x] 4. Feature Group erstellen mit Primary Key + Event Time
+- [x] 5. Dataframe in die Feature Group einfügen
 
 ```python
 # Connect to Hopsworks
@@ -91,20 +91,20 @@ mr = project.get_model_registry()
 
 ### 7. Implementation der Trainings-Pipeline
 
-- [ ] 1. Feature Group laden
-- [ ] 2. Feature View erstellen mit einer Query, die Features + Label auswählt
-- [ ] 3. Training Dataset aus der Feature View erstellen
-- [ ] 4. Modell trainieren und evaluieren
-- [ ] 5. Modell lokal abspeichern (joblib.dump o.ä.), dann in die Model Registry hochladen (create_model, model.save im Falle der Hopsworks Registry)
+- [x] 1. Feature Group laden
+- [x] 2. Feature View erstellen mit einer Query, die Features + Label auswählt
+- [x] 3. Training Dataset aus der Feature View erstellen
+- [x] 4. Modell trainieren und evaluieren
+- [x] 5. Modell lokal abspeichern (joblib.dump o.ä.), dann in die Model Registry hochladen (create_model, model.save im Falle der Hopsworks Registry)
 
 
 
 ### 8. Implementation der Inferenz-Pipeline
 
-- [ ] 1. Allfällige Live-Daten abrufen oder User-Input erfragen
-- [ ] 2. Feature View holen und mit der View die neuesten Features laden
-- [ ] 3. Modell aus der Model Registry herunterladen
-- [ ] 4. Prediction durchführen
+- [x] 1. Allfällige Live-Daten abrufen oder User-Input erfragen
+- [x] 2. Feature View holen und mit der View die neuesten Features laden
+- [x] 3. Modell aus der Model Registry herunterladen
+- [x] 4. Prediction durchführen
 
 ### 9. Dokumentation in einem README.md File im Repository
 
