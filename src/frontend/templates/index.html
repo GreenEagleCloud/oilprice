@@ -367,15 +367,22 @@
     }
 
     function render(data) {
-        document.getElementById('resultDate').textContent = data.date;
+        const f = data.features || {};
+        const isForward = data.model === 'forward_forecast';
+        const dateLabel = isForward
+            ? `${data.date} · Forward-Prognose (${data.forecast_horizon_days} Tage ab ${data.origin_date})`
+            : data.date;
+
+        document.getElementById('resultDate').textContent = dateLabel;
         document.getElementById('resultPrice').textContent =
             'CHF ' + Number(data.prediction_next_week_price).toFixed(2);
 
         // Diagramm: 7-Tage-Durchschnitt -> aktuell -> Vorhersage für nächste Woche
-        const f = data.features || {};
+        const mean7 = f.origin_price_mean_7d != null ? f.origin_price_mean_7d : f.price_mean_7d;
+        const current = f.origin_current_price != null ? f.origin_current_price : f.current_price;
         const values = [
-            f.price_mean_7d != null ? Number(f.price_mean_7d) : null,
-            f.current_price != null ? Number(f.current_price) : null,
+            mean7 != null ? Number(mean7) : null,
+            current != null ? Number(current) : null,
             Number(data.prediction_next_week_price)
         ];
         if (chart) chart.destroy();

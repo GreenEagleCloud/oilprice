@@ -35,8 +35,10 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 ### Hopsworks-Flow (TODO Punkte 6–8)
 * `hw_config.py` – gemeinsame Konfiguration (Names, Features, `.env`) + `login()`
 * `hw_feature_pipeline.py` – Feature Group `heizoel24` (online-enabled) + Feature View `heizoel24_weekly`
-* `hw_training_pipeline.py` – Training aus der Feature View → MLflow + Hopsworks Model Registry (+ S3-Export)
-* `inference/hw_app.py` – Flask-App: Feature Vector aus dem Online Store, Modell aus dem Model Registry (S3-Fallback)
+* `hw_forward_feature_pipeline.py` – Feature Group `heizoel24_forward` + Feature View `heizoel24_forward_forecast` für zukünftige Zieltermine; Primary Keys sind `target_date` + `origin_date`, `forecast_horizon_days` ist ein Modell-Feature
+* `hw_training_pipeline.py` – Training aus der wöchentlichen Feature View → MLflow + Hopsworks Model Registry (+ S3-Export)
+* `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View → MLflow + Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export)
+* `inference/hw_app.py` – Flask-App: zuerst wöchentlicher Feature Vector; bei fehlendem/futurischem Datum Fallback auf Forward-Feature-View und `oil_price_forward_model`
 
 ## Hopsworks-Setup
 
@@ -45,10 +47,34 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 2. Pipelines in dieser Reihenfolge ausführen (Repo-Root):
 
    ```bash
-   python src/hw_feature_pipeline.py    # Feature Group + Feature View
-   python src/hw_training_pipeline.py   # Train + Registrierung (Model Registry)
-   python src/inference/hw_app.py       # Flask-App (Port 5000)
+   python src/hw_feature_pipeline.py          # Wochen-Feature Group + Feature View
+   python src/hw_forward_feature_pipeline.py  # Forward-Feature Group + Feature View
+   python src/hw_training_pipeline.py         # Wochenmodell trainieren + registrieren
+   python src/hw_forward_training_pipeline.py # Forward-Modell trainieren + registrieren
+   python src/inference/hw_app.py             # Flask-App (Port 5000)
    ```
+
+   Für lokale Läufe ohne in-cluster MLflow-Server kann `MLFLOW_TRACKING_URI`
+   auf eine lokale SQLite-DB gesetzt werden, z. B.:
+
+   ```bash
+   MLFLOW_TRACKING_URI=sqlite:////absolute/path/to/mlflow.db \
+     python src/hw_forward_training_pipeline.py
+   ```
+
+## Verifizierter Forward-Serving-Test
+
+Live-Test gegen den Hopsworks Feature Store:
+
+* Feature Group: `heizoel24_forward` v1, online-enabled
+* Feature View: `heizoel24_forward_forecast` v1
+* Primary Keys: `target_date` + `origin_date`
+* Event Time: `origin_date`
+* Online-Lookup für `target_date=2026-11-11`, `origin_date=2026-10-09`
+  liefert `forecast_horizon_days=33`
+* Registriertes Modell: `oil_price_forward_model` v2
+* `/predict` für `2026-11-11` antwortet mit `model=forward_forecast`,
+  `origin_date=2026-10-09` und `forecast_horizon_days=33`
 
 ## Inferenz-API
 
@@ -62,16 +88,46 @@ curl -X POST http://localhost:5000/predict \
 {
   "date": "2026-10-02",
   "prediction_next_week_price": 161.2,
+  "model": "weekly",
   "passed_features": {"current_price": 164.89, "current_demand": 12.28},
   "features": { "price_mean_7d": 165.4, "current_price": 164.89, "...": "..." }
+}
+```
+
+Future target dates use the forward-forecast fallback automatically:
+
+```bash
+curl -X POST http://localhost:5000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"date": "2026-11-11", "current_price": 164.89, "current_demand": 12.28}'
+```
+
+```json
+{
+  "date": "2026-11-11",
+  "requested_date": "2026-11-11",
+  "origin_date": "2026-10-09",
+  "forecast_horizon_days": 33,
+  "prediction_next_week_price": 158.7,
+  "model": "forward_forecast",
+  "features": {
+    "origin_price_mean_7d": 165.4,
+    "origin_current_price": 164.89,
+    "target_month": 11,
+    "target_season": "Herbst",
+    "forecast_horizon_days": 33
+  }
 }
 ```
 
 * `date` – optional, Default: letzter verfügbarer Tag der lokalen Daten
 * `current_price` / `current_demand` – optionale Live-Daten / User-Input
   (Realtime-Features); ohne Angabe werden die gespeicherten Online-Werte
-  des angegebenen Datums verwendet
+  des angegebenen Datums verwendet. Bei Forward-Prognosen werden diese Werte
+  als bekannte Werte am `origin_date` interpretiert.
 * `features` – alle Features, die zur Prediction geführt haben
+* `model` – `weekly` für vorhandene Feature-Store-Daten, `forward_forecast`
+  für zukünftige Zieltermine
 
 ## Wichtige Design-Entscheidungen
 
@@ -85,3 +141,13 @@ curl -X POST http://localhost:5000/predict \
   die nächste Versionsnummer automatisch vergeben (1, 2, 3, …).
 * **Realtime-Features**: `current_price`/`current_demand` können zur
   Inferenzzeit per `passed_features` live mitgegeben werden.
+* **Forward-Forecast**: zukünftige Zieltermine werden über
+  `heizoel24_forward_forecast` bedient. Die Online-Zeilen sind nach
+  `target_date` + `origin_date` keyed; `forecast_horizon_days` ist ein
+  normales Modell-Feature. Serving-Horizons sind 1–90 Tage, Trainings-Horizons
+  sind grober, damit die Feature Group kleiner bleibt.
+* **Forward-Modellgröße**: Die Forward-Feature Group enthält deutlich mehr
+  Zeilen als die Wochen-Feature Group. Deshalb verwendet
+  `hw_forward_training_pipeline.py` einen kleineren RandomForest
+  (`max_depth`, `min_samples_leaf`, `max_features`), damit das registrierte
+  Modell für Inferenz praktikabel bleibt.

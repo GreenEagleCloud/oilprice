@@ -13,9 +13,9 @@ spec:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: feature-pipeline
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.0
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.1
             imagePullPolicy: Always
-            command: ["python", "src/hw_feature_pipeline.py"]
+            command: ["sh", "-c", "python src/hw_feature_pipeline.py && python src/hw_forward_feature_pipeline.py"]
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
