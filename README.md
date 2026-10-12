@@ -70,11 +70,11 @@ Live-Test gegen den Hopsworks Feature Store:
 * Feature View: `heizoel24_forward_forecast` v1
 * Primary Keys: `target_date` + `origin_date`
 * Event Time: `origin_date`
-* Online-Lookup für `target_date=2026-11-11`, `origin_date=2026-10-09`
-  liefert `forecast_horizon_days=33`
+* Online-Lookup für `target_date=2026-11-11`, `origin_date=2026-10-12`
+  liefert `forecast_horizon_days=30`
 * Registriertes Modell: `oil_price_forward_model` v2
 * `/predict` für `2026-11-11` antwortet mit `model=forward_forecast`,
-  `origin_date=2026-10-09` und `forecast_horizon_days=33`
+  `origin_date=2026-10-12` und `forecast_horizon_days=30`
 
 ## Inferenz-API
 
@@ -106,8 +106,8 @@ curl -X POST http://localhost:5000/predict \
 {
   "date": "2026-11-11",
   "requested_date": "2026-11-11",
-  "origin_date": "2026-10-09",
-  "forecast_horizon_days": 33,
+  "origin_date": "2026-10-12",
+  "forecast_horizon_days": 30,
   "prediction_next_week_price": 158.7,
   "model": "forward_forecast",
   "features": {
@@ -115,7 +115,7 @@ curl -X POST http://localhost:5000/predict \
     "origin_current_price": 164.89,
     "target_month": 11,
     "target_season": "Herbst",
-    "forecast_horizon_days": 33
+    "forecast_horizon_days": 30
   }
 }
 ```
@@ -150,4 +150,66 @@ curl -X POST http://localhost:5000/predict \
   Zeilen als die Wochen-Feature Group. Deshalb verwendet
   `hw_forward_training_pipeline.py` einen kleineren RandomForest
   (`max_depth`, `min_samples_leaf`, `max_features`), damit das registrierte
+
+## Kubernetes Deployment
+
+Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
+`https://oilprice.greeneagle.ai/` erreichbar. Die HTTPRoute verweist auf
+`frontend-service`, und das Frontend ruft intern `inference-service` auf.
+
+Aktuelle Images:
+
+```text
+ghcr.io/greeneaglecloud/oilprice-frontend:1.3
+ghcr.io/greeneaglecloud/oilprice-inference:1.3
+ghcr.io/greeneaglecloud/oilprice-pipelines:1.3
+```
+
+Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
+
+```bash
+kubectl -n oilprice delete jobs -l purpose=kaniko-build --ignore-not-found
+kubectl apply -f k8s/kaniko-build-jobs.yaml
+kubectl -n oilprice wait --for=condition=complete job/kaniko-build-frontend --timeout=20m
+kubectl -n oilprice wait --for=condition=complete job/kaniko-build-inference --timeout=20m
+kubectl -n oilprice wait --for=condition=complete job/kaniko-build-pipelines --timeout=20m
+```
+
+Deployments, Services, CronJobs und Route anwenden:
+
+```bash
+kubectl apply -f k8s/frontend-service.yaml \
+  -f k8s/inference-service.yaml \
+  -f k8s/frontend-deployment.yaml \
+  -f k8s/inference-deployment.yaml \
+  -f k8s/feature-cronjob.yaml \
+  -f k8s/training-cronjob.yaml \
+  -f k8s/collect-cronjob.yaml \
+  -f k8s/reference-grant.yaml \
+  -f k8s/oilprice-httproute.yaml
+
+kubectl -n oilprice rollout status deployment/frontend
+kubectl -n oilprice rollout status deployment/inference
+```
+
+Feature-Pipeline sofort auslösen, damit die Forward-Feature-Rows mit dem
+aktuellen `origin_date` aus dem S3-Rohdatensatz aktualisiert werden:
+
+```bash
+kubectl -n oilprice create job "feature-pipeline-manual-$(date +%Y%m%d%H%M%S)" \
+  --from=cronjob/feature-pipeline
+```
+
+Verifizierter Live-Test:
+
+```bash
+curl -sS -X POST https://oilprice.greeneagle.ai/predict \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-11-11","current_price":164.89,"current_demand":12.28}'
+```
+
+Erwartetes Verhalten: `model=forward_forecast`, `origin_date` ist der aktuell
+verfügbare Feature-Store-Tag, und `forecast_horizon_days` ist die Differenz
+zwischen `target_date` und `origin_date`.
+
   Modell für Inferenz praktikabel bleibt.
