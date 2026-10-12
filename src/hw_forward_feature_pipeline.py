@@ -64,13 +64,26 @@ def _season(month: int) -> str:
 
 
 def _load_raw_prices() -> pd.DataFrame:
-    if not DATA_FILE.exists():
-        raise FileNotFoundError(
-            f"Raw price file not found: {DATA_FILE}. "
-            "Run src/collect_daily_prices.py first."
-        )
+    """Load raw prices from S3 when available, otherwise from the local CSV.
 
-    df = pd.read_csv(DATA_FILE)
+    In Kubernetes the fresh source of truth is the CSV written daily by
+    `src/collect_daily_prices.py` to `s3://oilprice-features/raw/oil_data.csv`.
+    The local `DATA_FILE` is only a fallback for local development or when S3
+    credentials are unavailable.
+    """
+    try:
+        from hw_feature_pipeline import load_prices
+
+        df = load_prices()
+    except Exception as e:
+        if not DATA_FILE.exists():
+            raise FileNotFoundError(
+                f"Raw price file not found: {DATA_FILE}. "
+                "Run src/collect_daily_prices.py first."
+            ) from e
+        print(f"S3 raw price load failed ({e}); falling back to {DATA_FILE}")
+        df = pd.read_csv(DATA_FILE)
+
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
     return df

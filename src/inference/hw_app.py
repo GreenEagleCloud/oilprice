@@ -312,27 +312,31 @@ def _forward_feature_vector(entry_date: pd.Timestamp, passed_features: dict):
             )
         return vector, origin_date, horizon, None
 
-    # First use the latest origin date known locally. This is the normal case
-    # when the inference image and feature pipelines are in sync.
-    try:
-        local_origin = _latest_origin_date()
-        vector, origin_date, horizon, error = try_origin(local_origin)
-        if vector is not None:
-            return vector, origin_date, horizon, None
-    except Exception as e:
-        error = str(e)
-        origin_date = entry_date.normalize()
-        horizon = 0
-
-    # If the local origin date is stale or the exact forward row is missing,
-    # discover the latest weekly feature-store date before the target date.
+    # Prefer the freshest origin date from the online weekly feature store.
+    # This is the normal production case after the daily feature pipelines have
+    # refreshed both the weekly and forward feature views.
     probed_origin = _latest_weekly_date_before(entry_date, max_horizon)
     if probed_origin is not None:
         vector, probed_origin, horizon, probe_error = try_origin(probed_origin)
         if vector is not None:
             return vector, probed_origin, horizon, None
-        error = probe_error or error
-        origin_date = probed_origin
+        error = probe_error
+
+    # If the online forward rows are stale or missing, fall back to the latest
+    # origin date known from the local data files baked into the image.
+    try:
+        local_origin = _latest_origin_date()
+        vector, origin_date, horizon, local_error = try_origin(local_origin)
+        if vector is not None:
+            return vector, origin_date, horizon, None
+        error = local_error or error
+    except Exception as e:
+        error = str(e) or error
+        if probed_origin is None:
+            origin_date = entry_date.normalize()
+            horizon = 0
+        else:
+            origin_date = probed_origin
 
     return None, origin_date, horizon, error
 
