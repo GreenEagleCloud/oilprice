@@ -194,7 +194,11 @@ def _latest_origin_date() -> pd.Timestamp:
 
 
 def _latest_weekly_date_before(entry_date: pd.Timestamp, max_lookback_days: int) -> pd.Timestamp | None:
-    """Find the latest date <= entry_date that has a weekly feature vector."""
+    """Find the latest date <= entry_date that has a usable weekly feature vector.
+
+    Hopsworks can return an all-NULL vector for dates that are not present in
+    the online feature store, so `len(vector) > 0` alone is not enough.
+    """
     try:
         fv = _get_fv()
     except Exception:
@@ -207,7 +211,9 @@ def _latest_weekly_date_before(entry_date: pd.Timestamp, max_lookback_days: int)
                 entry={"date": candidate},
                 return_type="pandas",
             )
-            if vector is not None and len(vector) > 0:
+            if vector is None or len(vector) == 0:
+                continue
+            if vector.notna().any(axis=1).iloc[0]:
                 return candidate
         except Exception:
             continue
