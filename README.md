@@ -136,7 +136,7 @@ der Markttreiber in derselben Einheit wie das Trainingslabel (CHF/100 l).
 | Quelle | Inhalt | Hinweis |
 | --- | --- | --- |
 | Yahoo Finance `USDCHF=X` | USD/CHF Schlusskurs, täglich seit 2003-09-17 | Primärquelle |
-| ECB `eurofxref-hist.csv` / `eurofxref-daily.xml` | EUR/USD und EUR/CHF → `usd_chf = EURCHF / EURUSD` | Fallback, seit 1999 |
+| ECB `eurofxref-hist.zip` (entpackt `eurofxref-hist.csv`) / `eurofxref-daily.xml` | EUR/USD und EUR/CHF → `usd_chf = EURCHF / EURUSD` | Fallback, seit 1999 |
 | Yahoo Finance `BZ=F` | Brent USD/barrel → USD/t mit 7.4433 bbl/t | Brent-Proxy für Gasoil |
 | FRED `DCOILBRENTEU` | Brent USD/barrel, täglich seit 1987 | Fallback, Antwort in <1 s |
 
@@ -179,13 +179,12 @@ auf ECB/FRED zurück; `merge_raw()` upsertet per Datum, die Historie wächst als
 
 **Fenster-Sanity (Loch im Rohdatensatz):** Die 7-Tage-Fenster zählen *Beobachtungen*,
 nicht Kalendertage – das ist nur dann eine Woche, wenn die Quellserie lückenlos ist.
-Ist sie es nicht (in dieser Umgebung endet die ECB-Historie nach 2010-02-14, der
-aktuelle Tag kommt aus `eurofxref-daily.xml`), blickt ein "7-Tage"-Fenster über
-16 Jahre und erzeugt Werte wie **+38.8 % Wochenänderung**, die dann bis in die
-Online-Inferenz durchschlagen. `build_market_features()` verwirft solche Fenster
-(NULL statt Fantasiewert): `MAX_WINDOW_SPAN_DAYS = 14` für den 7-Beobachtungs-
-Mittelwert, `MAX_LAG_DAYS = 21` für die 7-Beobachtungs-Änderung (sieben Handelstage
-spannen 9–13 Kalendertage, mit Feiertagen etwas mehr). Im Log sichtbar:
+Ist sie es nicht, blickt ein "7-Tage"-Fenster über 16 Jahre und erzeugt Werte wie
+**+38.8 % Wochenänderung**, die dann bis in die Online-Inferenz durchschlagen.
+`build_market_features()` verwirft solche Fenster (NULL statt Fantasiewert):
+`MAX_WINDOW_SPAN_DAYS = 14` für den 7-Beobachtungs-Mittelwert, `MAX_LAG_DAYS = 21`
+für die 7-Beobachtungs-Änderung (sieben Handelstage spannen 9–13 Kalendertage, mit
+Feiertagen etwas mehr). Im Log sichtbar:
 
 ```text
 gap guard: dropped 18 7-day change values whose 7-observation lag exceeded 21 calendar days
@@ -193,6 +192,16 @@ gap guard: dropped 18 7-day change values whose 7-observation lag exceeded 21 ca
 
 Echte historische Ausschläge bleiben erhalten (Dez 2008 / Jan 2009: ±30–49 %,
 Sept 2001: −30 %) – die Schwelle trifft nur echte Datenlöcher.
+
+> [!NOTE]
+> **Ursache des Lochs gefunden und behoben (2026-10-18):** `eurofxref-hist.csv`
+> wurde hier gekürzt ausgeliefert – HTTP 200, aber nur 2801 Zeilen (1999-01-05 …
+> 2010-02-14). Dasselbe File als `eurofxref-hist.zip` enthält 7116 Zeilen bis
+> 2026-10-16. Der Collector zieht jetzt die **Zip zuerst** (`_fetch_ecb_hist()`),
+> die CSV bleibt Fallback; der Markt-Rohdatensatz wächst damit von 2841 auf
+> **7155 Zeilen (1998-12-23 … 2026-10-16)** ohne 16-Jahres-Loch, und die
+> Markt-Treiber decken die Preiszeitreihe lückenlos ab. Der Guard bleibt trotzdem
+> nötig – er fängt jede zukünftige Quelle ab, die das Publizieren einstellt.
 
 
 ## Training mit Rhein- und Markt-Treibern
@@ -243,12 +252,13 @@ Lag-Join (≥ 49 Tage), der fachlich abgestützt werden muss.
 | Rhein + Markt (23) | **30.96** | **3.75** |
 
 Die Pegel-Features verbessern den Ausblick deutlich (MAE −0.31 CHF/100 l ≈ −7.7 %).
-Der Markt-Block ist in diesem Lauf **noch nicht belastbar**: in der gebrauchten
+Der Markt-Block war in diesem Lauf **noch nicht belastbar**: in der gebrauchten
 Umgebung war die ECB-Historie veraltet (USD/CHF nur bis 2010-02 + ein aktueller
 Tag), deshalb sind die Markt-Spalten im Testzeitraum 2025/2026 fast ausschliesslich
-NULL. Mit aktuellem ECB/Yahoo-Stand (Cluster) wird dieser Block erst sinnvoll
-messbar – die Pipeline ist so gebaut, dass er dann automatisch vollständig gefüllt
-wird. Der Vergleich ist reproduzierbar:
+NULL. Nach dem Zip-Fix (siehe Fenster-Sanity oben) ist die Historie lückenlos, und im
+Cluster sinkt damit der MSE des vollen Feature-Sets: `oil_price_model` v14 → v16 mit
+MSE 2.79 → **1.81**, `oil_price_forward_model` v10 → v12 mit MSE 4.81 → **3.97**.
+Der Vergleich ist reproduzierbar:
 
 ```bash
 OILPRICE_USE_RHEIN_FEATURES=0 OILPRICE_USE_MARKET_FEATURES=0 \
@@ -575,15 +585,35 @@ Registered 'oil_price_model' (version 14)
 Registered 'oil_price_forward_model' (version 10) | MSE: 4.8118
 ```
 
-Inferenz gegen das neue Modell (`POST /predict`, 2026-10-16) liefert alle 23
-Spalten inklusive `basel_level_cm=472.0`, `rhein_low_water_flag`,
-`market_price_chf_100l=65.59`, `usd_chf=0.824` und `model=weekly`.
+**Nach dem ECB-Zip-Fix (`pipelines:1.9`, `inference:1.6`, 2026-10-18):**
 
-Die Markt-Abdeckung liegt bei 1791 von 8659 Preis-Tagen: der Rohdatensatz startet
-mit `OILPRICE_MARKET_PERIOD=10y`, und die ECB-Historie endet in dieser Umgebung
-nach 2010-02-14 (`eurofxref-hist.csv` enthält hier nur 1999-01-05 … 2010-02-14).
-Für eine lückenlose Markt-Historie `python src/collect_oil_market_prices.py
---period max` laufen lassen und den ECB-Feed auf echten Stand prüfen.
+```text
+# collect-daily-prices
+ECB USD/CHF history (zip): 7116 rows 1999-01-04 .. 2026-10-16
+market data: 7155 rows 1998-12-23 .. 2026-10-16 | gasoil source=brent_proxy:fred:DCOILBRENTEU fx source=ecb:eurofxref
+
+# feature-pipeline
+Feature group 'oil_market' v1: 7155 rows upserted
+driver features joined: 11 columns | coverage: basel_level_cm=2310, ... market_price_chf_100l=6104
+Feature group 'heizoel24' v2: 8659 rows upserted
+Feature view 'heizoel24_weekly' v2 ready (23 features)
+Feature group 'heizoel24_forward' v2: 370878 rows upserted
+
+# training-pipeline
+X_train: (6921, 23) | X_test: (1731, 23) | MSE: 1.8062
+Registered 'oil_price_model' (version 16)
+Registered 'oil_price_forward_model' (version 12) | MSE: 3.9662
+```
+
+Inferenz gegen das neue Modell (`POST /predict`): `date=2026-10-16` liefert alle 23
+Spalten – `basel_level_cm=472.0`, `rhein_low_water_flag=1`, `market_price_chf_100l=65.59`,
+`market_price_chf_100l_chg_7d_pct=-0.64`, `usd_chf=0.824`, `model=weekly`;
+`date=2026-10-23` läuft über den Forward-Pfad und meldet die 24 `origin_*`-Spalten
+mit `model=forward_forecast`.
+
+Die Markt-Abdeckung liegt jetzt bei 6104 von 8659 Preis-Tagen (vorher 1791): der
+Markt-Feed liefert nur Handelstage, Wochenenden und Feiertage bleiben leer – das ist
+gewollt, weil die 7-Tage-Fenster sonst über ein Datenloch blicken würden.
 
 Einmaliger Rhein-Bootstrap (volle Pegel-Historie seit 2020 und alle
 Fracht-Bulletins; schreibt `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`,
