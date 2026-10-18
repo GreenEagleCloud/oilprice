@@ -395,8 +395,9 @@ Geschichte, die Rhein-Daten und die Prognose.
 
 | Route | Zweck |
 |---|---|
-| `GET /` | Seite: Preisdiagramm, Rhein-Pegel + Fracht, Prognose-Formular |
+| `GET /` | Seite mit drei Tabs: Preise & Prognose / Rhein Wasserstand / Fracht & Umschlag Rheinhäfen |
 | `GET /api/history` | Preis-/Nachfrage-Historie (S3 zuerst, gebündelte CSV als Fallback) |
+| `GET /api/forecast` | Prognose-Kurve für das Preisdiagramm (Wochen- + Vorhersagemodell, 10-min-Cache) |
 | `GET /api/rhein` | Pegel-Snapshot, Pegel-Historie (365 Tage), Monats-Fracht (36 Monate) |
 | `POST /predict` | Proxy zum `inference-service` (`/predict`) |
 
@@ -420,6 +421,11 @@ zurück (`Dockerfile.frontend` kopiert `data/`). Antwort (Auszug):
 
 Dargestellt werden:
 
+* **Tabs** – `Preise & Prognose` (aktiv), `Rhein Wasserstand` und
+  `Fracht & Umschlag Rheinhäfen`. Die Panels werden nur versteckt, nicht
+  entfernt, damit ein Diagramm im anderen Tab Daten und Grösse behält; die
+  Tabs sind ARIA-Tablist mit Pfeiltasten-Navigation.
+
 * **Pegel-Kacheln** – aktueller Wert Basel-Rheinhalle und Kaub, Engstelle
   (`min(Basel, Kaub)`) und Niedrigwasser-Status. Eine Kachel wird rot, sobald
   eine Station unter ihrer Marke liegt (Basel 350 cm, Kaub 30 cm).
@@ -429,6 +435,30 @@ Dargestellt werden:
   Heizöl-/Diesel-/Gas-Position 07.23 in Tonnen. Der Hinweis nennt Berichtsmonat
   und Publikationsdatum: Die Fracht ist eine historische Grösse und wird nie als
   Live-Eingabe der Prognose verwendet.
+
+* **Prognose-Kurve im Preisdiagramm** (`GET /api/forecast`) – die Preislinie
+  endet nicht bei der letzten Messung (senkrechte Marke „letzte Messung“),
+  sondern geht gestrichelt weiter: der erste Punkt kommt vom Wochenmodell, die
+  folgenden Punkte in 7-Tage-Schritten vom Vorhersagemodell – standardmässig bis
+  60 Tage (`FORECAST_MAX_HORIZON`, Obergrenze des Feature Views: 90 Tage).
+  Beide Modelle sagen den Durchschnittspreis der **Woche nach** dem angefragten
+  Datum voraus; gezeichnet wird deshalb jeweils die Wochenmitte
+  (`Zieldatum + 4 Tage`, `_forecast_week_midpoint`). Würde man das Zieldatum
+  selbst nehmen, läge jeder Punkt eine Woche zu früh. Die Kurve wird serverseitig
+  gebaut – der Browser bräuchte sonst pro Horizontschritt eine eigene
+  `/predict`-Anfrage. Ein 502 des Inferenz-Dienstes bricht die Serie nach dem
+  ersten Versuch ab statt neun Timeouts zu produzieren; fehlende Horizonte
+  erscheinen als `errors` und als Warn-Chip unter dem Diagramm.
+* **Schwankungsband** – die Modelle liefern nur einen Punkt, keine
+  Unsicherheit. Das Band um die Prognoselinie ist deshalb eine ausdrücklich
+  benannte Schätzung: Standardabweichung der 7-Tage-Preisänderung über die
+  letzten drei Jahre (`FORECAST_VOLATILITY_DAYS`), skaliert mit
+  `sqrt(Horizont / 7)` (Multiplikator `FORECAST_BAND_SIGMA`). Auf der echten
+  Serie ergibt das rund ±5 CHF nach 7 Tagen und ±14 CHF nach 56 Tagen – etwas
+  weiter als der Fehler einer naiven Fortschreibung, weil das Band die
+  Preisschwankung selbst abbildet und nicht die Modellrestfehler. Es ist kein
+  Konfidenzintervall der Modelle und wird in der Oberfläche auch nicht so
+  genannt.
 
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur

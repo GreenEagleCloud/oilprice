@@ -31,6 +31,66 @@ def _local_price_candidates() -> list:
 # How long to cache the price history between S3/local reads (seconds).
 PRICE_CACHE_TTL = int(os.environ.get("PRICE_CACHE_TTL", 15 * 60))
 
+# ---------------------------------------------------------------------------
+# Readable labels for the "Vom Modell verwendete Merkmale" table.
+#
+# The names mirror the model feature lists in src/hw_config.py (FEATURES +
+# RHEIN_MODEL_FEATURES + MARKET_MODEL_FEATURES, and the origin_/target_
+# variants of FORWARD_FEATURES). They are repeated here because the frontend
+# image contains only src/frontend and cannot import src/hw_config.py - same
+# reason the low-water thresholds above are duplicated.
+# tests/test_frontend_ux.py checks that every model feature has a label.
+# ---------------------------------------------------------------------------
+_CORE_FEATURE_LABELS = {
+    # price & demand of heizoel24.ch
+    "price_mean_7d": ("Preis-Durchschnitt (7 Tage)", "CHF/100l", "Preis & Nachfrage"),
+    "price_std_30d": ("Preisschwankung (30 Tage)", "CHF", "Preis & Nachfrage"),
+    "demand_mean_7d": ("Nachfrage-Durchschnitt (7 Tage)", "Index", "Preis & Nachfrage"),
+    "demand_mean_30d": ("Nachfrage-Durchschnitt (30 Tage)", "Index", "Preis & Nachfrage"),
+    "current_price": ("Aktueller Preis", "CHF/100l", "Preis & Nachfrage"),
+    "current_demand": ("Nachfrageindex aktuell", "Index", "Preis & Nachfrage"),
+    "price_mean_dow_4w": ("Durchschnittspreis gleicher Wochentag (4 Wochen)", "CHF/100l", "Preis & Nachfrage"),
+    # calendar / seasonality
+    "month": ("Monat", "", "Zeit & Saison"),
+    "season": ("Jahreszeit", "", "Zeit & Saison"),
+    "month_sin": ("Monat zyklisch (Sinus)", "", "Zeit & Saison"),
+    "month_cos": ("Monat zyklisch (Kosinus)", "", "Zeit & Saison"),
+    "seasonal_index": ("Saisonaler Index", "", "Zeit & Saison"),
+    "target_month": ("Monat des Zieldatums", "", "Zeit & Saison"),
+    "target_season": ("Jahreszeit des Zieldatums", "", "Zeit & Saison"),
+    "target_month_sin": ("Zieldatum zyklisch (Sinus)", "", "Zeit & Saison"),
+    "target_month_cos": ("Zieldatum zyklisch (Kosinus)", "", "Zeit & Saison"),
+    "target_seasonal_index": ("Saisonaler Index des Zieldatums", "", "Zeit & Saison"),
+    "forecast_horizon_days": ("Prognosehorizont ab Ausgangstag", "Tage", "Zeit & Saison"),
+    # Rhine gauge drivers
+    "basel_level_cm": ("Rheinpegel Basel-Rheinhalle (Tagesminimum)", "cm", "Rhein-Pegel"),
+    "basel_level_min_7d": ("Rheinpegel Basel, tiefster Wert (7 Tage)", "cm", "Rhein-Pegel"),
+    "basel_level_zscore_30d": ("Rheinpegel Basel, Abweichung vom 30-Tage-Mittel", "Standardabweichungen", "Rhein-Pegel"),
+    "basel_low_days_30d": ("Niedrigwassertage Basel (30 Tage)", "Tage", "Rhein-Pegel"),
+    "basel_level_trend_7d": ("Pegeltrend Basel (7 Tage)", "cm", "Rhein-Pegel"),
+    "kaub_level_cm": ("Rheinpegel Kaub (Tagesminimum)", "cm", "Rhein-Pegel"),
+    "rhein_low_water_flag": ("Niedrigwasser-Alarm (Rhein)", "0 / 1", "Rhein-Pegel"),
+    # oil market drivers
+    "market_price_chf_100l": ("Ölmarkt-Referenzpreis (Gasoil zu CHF umgerechnet)", "CHF/100l", "Ölmarkt"),
+    "market_price_chf_100l_mean_7d": ("Ölmarkt-Referenzpreis-Durchschnitt (7 Tage)", "CHF/100l", "Ölmarkt"),
+    "market_price_chf_100l_chg_7d_pct": ("Ölmarkt-Referenzpreis-Änderung (7 Tage)", "%", "Ölmarkt"),
+    "gasoil_usd_tonne": ("ICE-Gasoil-Futures", "USD/Tonne", "Ölmarkt"),
+    "usd_chf": ("USD/CHF-Wechselkurs", "CHF/USD", "Ölmarkt"),
+}
+
+# The forward model keys every driver by origin_date, so those columns carry an
+# "origin_" prefix; the label says which date the value belongs to.
+_ORIGIN_LABELS = {
+    f"origin_{name}": (f"Ausgangstag: {label}", unit, group)
+    for name, (label, unit, group) in _CORE_FEATURE_LABELS.items()
+    if name not in ("month", "season", "month_sin", "month_cos", "seasonal_index")
+}
+
+FEATURE_LABELS = {
+    name: {"label": label, "unit": unit, "group": group}
+    for name, (label, unit, group) in {**_CORE_FEATURE_LABELS, **_ORIGIN_LABELS}.items()
+}
+
 _price_cache = {"ts": 0.0, "data": None}
 
 
@@ -88,6 +148,182 @@ def _read_price_history() -> tuple:
         },
         source,
     )
+
+
+# ---------------------------------------------------------------------------
+# Forecast curve drawn on the price chart
+#
+# The price chart shows the measured history and, from the last known price
+# date on, a dotted forecast built from BOTH models:
+#   * weekly model  -> the first week after the last known price date
+#   * forward model -> the following weeks out to FORECAST_MAX_HORIZON days
+#
+# Both models answer "what is the average price of the week AFTER the date you
+# ask about" (weekly: target_next_week_price, forward:
+# target_price_week_after_target_date). A point plotted at the requested date
+# would therefore sit a week too early, so every forecast point is placed at
+# the middle of the week it describes - see _forecast_week_midpoint().
+#
+# The curve is assembled here rather than in the browser because it needs one
+# /predict request per horizon step; doing that client-side would fire ~10
+# requests and repeat all of them on every price/demand edit.
+# ---------------------------------------------------------------------------
+FORECAST_MAX_HORIZON = int(os.environ.get("FORECAST_MAX_HORIZON", 60))
+FORECAST_CACHE_TTL = int(os.environ.get("FORECAST_CACHE_TTL", 10 * 60))
+WEEKLY_HORIZON_DAYS = 7  # the weekly model always answers for the next 7 days
+# Horizon steps asked of the forward model (its feature view serves 1..90 days).
+FORWARD_HORIZON_STEPS = (7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84)
+FORWARD_MAX_SERVING_HORIZON = 90
+# The models return a point prediction only - no uncertainty. The band is
+# therefore an explicitly labelled volatility estimate, not a model confidence
+# interval: the standard deviation of the 7-day price change over the last
+# VOLATILITY_DAYS days, growing with sqrt(horizon) the way an unguarded random
+# walk does (measured on the real series, the empirical horizon volatility
+# follows that sqrt curve closely).
+VOLATILITY_DAYS = int(os.environ.get("FORECAST_VOLATILITY_DAYS", 3 * 365))
+BAND_SIGMA = float(os.environ.get("FORECAST_BAND_SIGMA", 1.0))
+
+_forecast_cache = {"ts": 0.0, "key": None, "data": None}
+
+
+def _post_predict(payload: dict) -> tuple:
+    """One prediction request to the inference service. Returns (payload, status)."""
+    try:
+        response = requests.post(BACKEND_URL, json=payload, timeout=30)
+    except requests.RequestException as e:
+        return {"error": f"prediction service is unreachable: {e}"}, 502
+    try:
+        body = response.json()
+    except ValueError:
+        return {
+            "error": f"prediction service returned a non-JSON response (HTTP {response.status_code})",
+        }, 502
+    return body, response.status_code
+
+
+def _forecast_week_midpoint(date_str: str) -> str:
+    """Middle of the week a prediction describes (the week after date_str)."""
+    return (pd.Timestamp(date_str) + pd.Timedelta(days=4)).strftime("%Y-%m-%d")
+
+
+def _last_price_point(series: dict):
+    """(date, price) of the newest day that really has a price - the forecast origin."""
+    dates = series.get("dates") or []
+    prices = series.get("price") or []
+    for i in range(len(dates) - 1, -1, -1):
+        value = prices[i] if i < len(prices) else None
+        if value is not None:
+            return str(dates[i]), float(value)
+    return None
+
+
+def _weekly_price_sigma(series: dict):
+    """Std of the 7-day price change over the last VOLATILITY_DAYS days.
+
+    This is the scale the uncertainty band is built from. It comes from the same
+    price series the chart draws, so the band always reflects the volatility the
+    user can actually see in the history. The window is three years: one year of
+    heizoel24 prices swings too much to be a usable baseline.
+    """
+    prices = [
+        float(v)
+        for v in (series.get("price") or [])
+        if v is not None and not (isinstance(v, float) and math.isnan(v))
+    ]
+    if len(prices) < 30:
+        return None
+    changes = (pd.Series(prices) - pd.Series(prices).shift(7)).dropna().tail(VOLATILITY_DAYS)
+    if len(changes) < 8:
+        return None
+    sigma = float(changes.std())
+    return sigma if sigma > 0 else None
+
+
+def _prediction_of(payload: dict):
+    """The price a /predict response carries, whichever model answered."""
+    for key in ("prediction_next_week_price", "prediction"):
+        value = (payload or {}).get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _forecast_curve(origin_date: str, origin_price: float, series: dict,
+                    current_price=None, current_demand=None) -> dict:
+    """Assemble the dotted forecast: weekly model first, forward model further out."""
+    sigma = _weekly_price_sigma(series)
+    points, errors = [], {}
+
+    def band(horizon: int) -> float:
+        if sigma is None:
+            return 0.0
+        return round(BAND_SIGMA * sigma * math.sqrt(max(int(horizon), 1) / 7.0), 2)
+
+    def inputs(payload: dict) -> dict:
+        body = {"date": payload["date"]}
+        if current_price is not None:
+            body["current_price"] = current_price
+        if current_demand is not None:
+            body["current_demand"] = current_demand
+        return body
+
+    # 1) weekly model: the week after the last known price date
+    payload, status = _post_predict(inputs({"date": origin_date}))
+    weekly_prediction = _prediction_of(payload) if status == 200 else None
+    if weekly_prediction is None:
+        errors["weekly"] = (payload or {}).get("error") or f"HTTP {status}"
+        # 502 means the inference service itself is unreachable: asking it nine
+        # more times would only multiply the waiting time for the user.
+        if status == 502:
+            return {"error": errors["weekly"], "errors": errors}
+    else:
+        points.append({
+            "date": _forecast_week_midpoint(origin_date),
+            "value": round(weekly_prediction, 2),
+            "horizon_days": WEEKLY_HORIZON_DAYS,
+            "model": "weekly",
+            "origin_date": payload.get("origin_date") or origin_date,
+            "band": band(WEEKLY_HORIZON_DAYS),
+        })
+
+    # 2) forward model: same origin date, further weeks ahead
+    for horizon in FORWARD_HORIZON_STEPS:
+        if horizon > FORECAST_MAX_HORIZON or horizon > FORWARD_MAX_SERVING_HORIZON:
+            continue
+        target = (pd.Timestamp(origin_date) + pd.Timedelta(days=horizon)).strftime("%Y-%m-%d")
+        payload, status = _post_predict(inputs({"date": target}))
+        prediction = _prediction_of(payload) if status == 200 else None
+        if prediction is None:
+            errors[f"forward_{horizon}d"] = (payload or {}).get("error") or f"HTTP {status}"
+            if status == 502:
+                errors["service"] = "prediction service unreachable; remaining horizons skipped"
+                break
+            continue
+        points.append({
+            "date": _forecast_week_midpoint(target),
+            "value": round(prediction, 2),
+            "horizon_days": payload.get("forecast_horizon_days") or horizon,
+            "model": "forward",
+            "origin_date": payload.get("origin_date") or origin_date,
+            "band": band(horizon),
+        })
+
+    if not points:
+        return {"error": errors.get("weekly") or "no forecast point available", "errors": errors}
+
+    return {
+        "origin_date": origin_date,
+        "origin_price": origin_price,
+        "weekly_date": points[0]["date"] if points[0]["model"] == "weekly" else None,
+        "max_horizon_days": max(p["horizon_days"] for p in points),
+        "sigma_weekly": round(sigma, 2) if sigma else None,
+        "points": points,
+        "errors": errors,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +507,47 @@ def api_rhein():
     return jsonify(_rhein_cache["data"])
 
 
+@app.route('/api/forecast')
+def api_forecast():
+    """Dotted forecast curve for the price chart (cached per origin + inputs).
+
+    Query params: current_price / current_demand (optional, the same values the
+    forecast form sends). The curve always starts at the newest price date, so
+    the chart can extend the history line into the future without the user
+    having to press the button first.
+    """
+    data, source = _price_cache["data"] if _price_cache["data"] else _read_price_history()
+    origin = _last_price_point(data)
+    if origin is None:
+        return jsonify({"error": "no price history available"}), 503
+    origin_date, origin_price = origin
+
+    def number(name):
+        raw = (request.args.get(name) or "").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    current_price, current_demand = number("current_price"), number("current_demand")
+    key = (origin_date, current_price, current_demand)
+    now = time.time()
+    cached = _forecast_cache
+    if (cached["data"] is None or cached["key"] != key
+            or now - cached["ts"] > FORECAST_CACHE_TTL):
+        cached["ts"] = now
+        cached["key"] = key
+        cached["data"] = _forecast_curve(
+            origin_date, origin_price, data, current_price, current_demand
+        )
+    payload = dict(cached["data"])
+    payload["source"] = source
+    return jsonify(payload)
+
+
 @app.route('/api/history')
 def api_history():
     """Price & demand history for the chart (cached, S3-first)."""
@@ -283,7 +560,9 @@ def api_history():
 
 @app.route('/')
 def home():
-    return render_template('index.html')
+    # the label mapping is rendered into the page so the feature table can show
+    # human-readable names instead of the raw feature-store columns
+    return render_template('index.html', feature_labels=FEATURE_LABELS)
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -293,23 +572,11 @@ def predict():
     backend's error messages (e.g. "no feature vector for date ...; latest
     available date: ...") instead of a raw HTTPError string.
     """
-    data = request.json
-    try:
-        response = requests.post(BACKEND_URL, json=data, timeout=30)
-    except requests.RequestException as e:
-        return jsonify({'error': f'prediction service is unreachable: {e}'}), 502
-
-    try:
-        payload = response.json()
-    except ValueError:
-        return jsonify({'error': f'prediction service returned a non-JSON response (HTTP {response.status_code})'}), 502
-
-    if response.status_code != 200:
-        if isinstance(payload, dict):
-            return jsonify(payload), response.status_code
-        return jsonify({'error': str(payload)}), response.status_code
-
-    return jsonify(payload)
+    data = request.get_json(silent=True) or {}
+    payload, status = _post_predict(data)
+    if not isinstance(payload, dict):
+        payload = {"error": str(payload)}
+    return jsonify(payload), status
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

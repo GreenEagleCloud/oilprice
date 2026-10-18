@@ -108,3 +108,10 @@ mr = project.get_model_registry()
 ### 9. Dokumentation in einem README.md File im Repository
 
 https://github.com/GreenEagleCloud/oilprice#oilprice
+
+
+### ✅ 10. Lizenzklärung der externen Rhein-Datenquellen (WSV / LINDAS / data.bs.ch)
+
+> [!NOTE]
+> Geklärt: `data.bs.ch` Dataset 100089 = **CC0 1.0** (Publisher BAFU, Quellenangabe "Bundesamt für Umwelt, Hydrologische Daten und Vorhersagen"), LINDAS = amtliche BAFU-Observation Station 2289 via Schweizerisches Bundesarchiv (nur Snapshot/Cross-check), WSV Pegelonline REST v2 = kostenfreie Webservices ohne Archivierungs- oder Weiterverwendungsbeschränkung (WSV publiziert die Rohdaten selbst als Download ab 01.01.2000; die 30 Tage sind nur das Zeitfenster des Webservices, keine Löschfrist) → Rohdaten speichern, Features ableiten und im Frontend anzeigen ist damit gedeckt; Quellenangabe und der WSV-Hinweis "ungeprüft und ohne Gewähr" bleiben erhalten. Vorbehalt: der genaue Wortlaut der WSV-Nutzungsbedingungen wurde nicht maschinell verifiziert (Seite nicht abrufbar), nur die Startseite.
+

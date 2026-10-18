@@ -3,796 +3,1165 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Heizölpreis Prognose für die Schweiz</title>
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Heizölpreis-Prognose</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
-            --bg: #f8f9fb;
+            --bg: #f6f7f9;
             --card: #ffffff;
-            --ink: #222f3e;
-            --muted: #5c6b7a;
-            --accent: #066aab;
-            --accent-ink: #ffffff;
-            --green: #38f75c;
-            --red: #ec5146;
+            --ink: #1f2933;
+            --muted: #6b7280;
             --line: #e3e7ec;
-            --error: #b91c1c;
+            --accent: #0b7285;
+            --accent-soft: #e3f2f6;
+            --warn: #b42318;
+            --warn-soft: #fdecea;
+            --radius: 12px;
         }
         * { box-sizing: border-box; }
         body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: var(--bg);
-            color: var(--ink);
-            line-height: 1.5;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            margin: 0 auto; padding: 0 16px 48px; max-width: 1180px;
+            background: var(--bg); color: var(--ink);
         }
-        .brandbar {
-            background: var(--card);
-            border-bottom: 3px solid var(--green);
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        h1 { font-size: 1.5rem; margin: 24px 0 4px; }
+        h2 { font-size: 1.05rem; margin: 0; }
+        .sub { color: var(--muted); margin: 0 0 16px; font-size: .9rem; }
+
+        /* ------------------------------------------------------------------ *
+         * Global time filter: one control for every time-based chart.       *
+         * ------------------------------------------------------------------ */
+        .time-filter {
+            display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+            margin: 0 0 18px; padding: 10px 12px;
+            background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
         }
-        .brandbar-inner {
-            max-width: 860px;
-            margin: 0 auto;
-            padding: 14px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            flex-wrap: wrap;
+        .tf-label { font-size: .8rem; color: var(--muted); margin-right: 4px; }
+        .tf-btn {
+            font: inherit; font-size: .82rem; padding: 6px 12px; cursor: pointer;
+            border: 1px solid var(--line); border-radius: 999px;
+            background: #fff; color: var(--muted);
         }
-        .brand { display: flex; align-items: center; gap: 12px; }
-        .brand-logo { width: 46px; height: 46px; }
-        .brand h1 { font-size: 1.35rem; margin: 0; color: var(--ink); }
-        .powered-footer {
-            position: fixed;
-            bottom: 10px;
-            right: 14px;
-            color: var(--muted);
-            font-size: 0.85rem;
-            z-index: 10;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 2px 10px;
-            border-radius: 8px;
-        }
-        .powered-footer a { color: var(--accent); font-weight: 700; text-decoration: none; }
-        .powered-footer a:hover { text-decoration: underline; }
-        .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
-        h1 { font-size: 1.7rem; margin: 0 0 4px; }
-        .subtitle { color: var(--muted); margin: 0 0 24px; }
-        .chart-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-        .chart-head h2 { font-size: 1.05rem; margin: 0; color: var(--ink); }
-        .chart-head .latest { color: var(--muted); font-size: 0.85rem; margin-right: 10px; }
-        .tf-select {
-            font: inherit;
-            font-size: 0.85rem;
-            padding: 6px 10px;
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            background: #fff;
-            color: var(--ink);
-        }
-        .history-box { position: relative; }
-        .history-hint {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--muted);
-            font-size: 0.9rem;
-        }
+        .tf-btn:hover { border-color: #c9d2db; color: var(--ink); }
+        .tf-btn.is-active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+        .tf-note { font-size: .78rem; color: var(--muted); margin-left: auto; }
+
+        /* ------------------------------------------------------------------ *
+         * Cards, chart boxes, animated skeleton loaders                     *
+         * ------------------------------------------------------------------ */
         .card {
-            background: var(--card);
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            padding: 20px 22px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+            background: var(--card); border: 1px solid var(--line);
+            border-radius: var(--radius); padding: 16px; margin-bottom: 18px;
         }
-        form .row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
-        label { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; color: var(--muted); }
-        input {
-            font: inherit;
-            padding: 8px 10px;
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            background: #fff;
-            color: var(--ink);
-            min-width: 150px;
+        .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+        .chart-wrap { position: relative; height: 320px; }
+        .chart-canvas { display: block; width: 100%; height: 100%; }
+
+        .skeleton { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+        .skeleton-bars { display: flex; align-items: flex-end; gap: 8px; height: 100%; padding: 12px 4px 26px; }
+        .skeleton-bars i {
+            flex: 1; border-radius: 6px 6px 3px 3px;
+            background: linear-gradient(90deg, #e9edf1 0%, #f5f7f9 50%, #e9edf1 100%);
+            background-size: 300% 100%; animation: shimmer 1.4s ease-in-out infinite;
         }
-        button {
-            font: inherit;
-            cursor: pointer;
-            background: var(--accent);
-            color: var(--accent-ink);
-            border: none;
-            border-radius: 8px;
-            padding: 10px 18px;
-            font-weight: 600;
+        .skeleton-bars i:nth-child(1) { height: 42%; }
+        .skeleton-bars i:nth-child(2) { height: 66%; }
+        .skeleton-bars i:nth-child(3) { height: 54%; }
+        .skeleton-bars i:nth-child(4) { height: 78%; }
+        .skeleton-bars i:nth-child(5) { height: 61%; }
+        .skeleton-bars i:nth-child(6) { height: 88%; }
+        .skeleton-bars i:nth-child(7) { height: 70%; }
+        .skeleton-bars i:nth-child(8) { height: 50%; }
+        .skeleton-line {
+            height: 12px; margin: 10px 0; border-radius: 6px;
+            background: linear-gradient(90deg, #e9edf1 0%, #f5f7f9 50%, #e9edf1 100%);
+            background-size: 300% 100%; animation: shimmer 1.4s ease-in-out infinite;
         }
-        button:disabled { opacity: 0.6; cursor: default; }
-        .status { margin-left: 12px; color: var(--muted); font-size: 0.9rem; }
-        .result { margin-top: 22px; display: none; }
-        .result.show { display: block; }
-        .result-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-        .result-date { color: var(--muted); font-size: 0.95rem; }
-        .price { font-size: 2.2rem; font-weight: 700; color: var(--accent); }
-        .chart-box { margin: 14px 0 4px; }
-        h3 { font-size: 1rem; margin: 20px 0 8px; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-        th { color: var(--muted); font-weight: 600; }
-        td.val { font-variant-numeric: tabular-nums; text-align: right; }
-        .rhein-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-        .stat {
-            flex: 1 1 150px;
-            border: 1px solid var(--line);
-            border-radius: 10px;
-            padding: 10px 12px;
-            background: #fbfcfe;
+        .skeleton-line.w60 { width: 60%; }
+        .skeleton-line.w40 { width: 40%; }
+        @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+        @media (prefers-reduced-motion: reduce) {
+            .skeleton-bars i, .skeleton-line { animation: none; }
         }
-        .stat-label {
-            color: var(--muted);
-            font-size: 0.78rem;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
+
+        /* ------------------------------------------------------------------ *
+         * Info tooltips: explanations live next to the heading, not in a    *
+         * paragraph under the chart.                                        *
+         * ------------------------------------------------------------------ */
+        .info-btn {
+            font: inherit; font-size: .75rem; font-weight: 700; line-height: 1;
+            width: 20px; height: 20px; padding: 0; cursor: pointer;
+            border: 1px solid #c9d2db; border-radius: 50%;
+            background: #fff; color: var(--muted);
         }
-        .stat-value { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-        .stat-note { color: var(--muted); font-size: 0.75rem; }
-        .stat.alert { border-color: #fecaca; background: #fef2f2; }
-        .stat.alert .stat-value { color: var(--error); }
-        .error {
-            margin-top: 16px;
-            display: none;
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: var(--error);
-            border-radius: 8px;
-            padding: 12px 14px;
-            font-size: 0.95rem;
+        .info-btn:hover, .info-btn.is-open { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+        .info-pop {
+            position: absolute; z-index: 25; left: 0; top: calc(100% + 6px);
+            max-width: 420px; padding: 10px 12px; font-size: .82rem; line-height: 1.45;
+            background: #1f2933; color: #f4f6f8; border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(16, 24, 40, .18);
         }
-        .error.show { display: block; }
-        .hint { color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+        .info-pop[hidden] { display: none; }
+        .card-head { position: relative; }
+
+        /* ------------------------------------------------------------------ *
+         * Rhine statistics tiles                                            *
+         * ------------------------------------------------------------------ */
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+        .stat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fbfcfd; }
+        .stat .label { font-size: .76rem; color: var(--muted); }
+        .stat .value { font-size: 1.15rem; font-weight: 700; margin-top: 2px; }
+        .stat .unit { font-size: .8rem; font-weight: 500; color: var(--muted); }
+        .stat.is-warn { border-color: #f1c2bd; background: var(--warn-soft); }
+        .stat.is-warn .value { color: var(--warn); }
+        .stat.is-ok .value { color: #146c43; }
+        .stat-skeleton { height: 12px; }
+
+        /* ------------------------------------------------------------------ *
+         * Forecast area: two columns on desktop (form + feature table).     *
+         * ------------------------------------------------------------------ */
+        .two-col { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+        @media (min-width: 900px) {
+            .two-col { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+            .col-main, .col-side { min-width: 0; }
+        }
+
+        /* Result card: the number the whole page is about. */
+        .result-card {
+            border: 1px solid #bfe3ea; border-left: 6px solid var(--accent);
+            background: linear-gradient(180deg, #f2fafc, #ffffff);
+        }
+        .result-card[hidden] { display: none; }
+        .result-label { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+        .result-price { font-size: 2.4rem; font-weight: 800; line-height: 1.1; margin: 4px 0 2px; }
+        .result-price .unit { font-size: 1rem; font-weight: 600; color: var(--muted); }
+        .result-meta { font-size: .85rem; color: var(--muted); }
+        .result-delta { display: inline-block; margin-top: 8px; padding: 4px 10px; border-radius: 999px; font-size: .82rem; background: #eceff3; }
+
+        /* Forecast form: vertical fields with floating labels. */
+        .forecast-form h2 { margin-bottom: 14px; }
+        .field { position: relative; margin-bottom: 22px; }
+        .field input {
+            font: inherit; width: 100%; padding: 18px 12px 8px;
+            border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink);
+        }
+        .field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+        .field input::placeholder { color: #9aa5b1; }
+        .field label {
+            position: absolute; left: 12px; top: 14px; pointer-events: none;
+            font-size: .95rem; color: var(--muted); transition: all .14s ease;
+        }
+        .field input:focus + label,
+        .field input:not(:placeholder-shown) + label {
+            top: 5px; font-size: .72rem; color: var(--accent); font-weight: 600;
+        }
+        .field-hint { margin: 5px 0 0; font-size: .76rem; color: var(--muted); }
+        .primary-btn {
+            font: inherit; font-size: 1rem; font-weight: 700; width: 100%;
+            padding: 14px 18px; margin-top: 6px; cursor: pointer;
+            border: 0; border-radius: 10px; background: var(--accent); color: #fff;
+            box-shadow: 0 4px 14px rgba(11, 114, 133, .25);
+        }
+        .primary-btn:hover { background: #095c6c; }
+        .primary-btn:disabled { background: #9fb4bb; cursor: progress; box-shadow: none; }
+        .error { color: var(--warn); font-size: .85rem; margin-top: 10px; }
+        .error[hidden] { display: none; }
+        /* Inline failure card: a failed request must never leave a blank box. */
+        .error-card {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+            border: 1px solid #f3c9c4; background: var(--warn-soft);
+            color: var(--warn); font-size: .85rem;
+        }
+        .error-card[hidden] { display: none; }
+
+        /* ------------------------------------------------------------------ *
+         * Feature table: readable names first, technical key as footnote.   *
+         * ------------------------------------------------------------------ */
+        .feature-group { margin-bottom: 14px; }
+        .feature-group:last-child { margin-bottom: 0; }
+        .feature-group-title {
+            font-size: .74rem; letter-spacing: .04em; text-transform: uppercase;
+            color: var(--muted); border-bottom: 1px solid var(--line);
+            padding-bottom: 4px; margin-bottom: 4px;
+        }
+        .feature-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px dashed #eef1f4; }
+        .feature-row:last-child { border-bottom: 0; }
+        .feature-name { font-size: .87rem; }
+        .feature-tech {
+            display: block; font-size: .7rem; color: #98a2ad;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+        .feature-value { margin-left: auto; font-size: .9rem; font-weight: 700; white-space: nowrap; }
+        .feature-unit { font-size: .72rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
+        .feature-empty { font-size: .85rem; color: var(--muted); }
+
+        /* ------------------------------------------------------------------ *
+         * Tabs: three views in one box (charts / Rhine water / port cargo).  *
+         * Hidden panels stay in the DOM so their charts can still be built.  *
+         * ------------------------------------------------------------------ */
+        .tabs {
+            display: flex; gap: 4px; flex-wrap: wrap;
+            margin: 0 0 16px; padding: 4px;
+            background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+        }
+        .tab {
+            font: inherit; font-size: .88rem; padding: 9px 14px; cursor: pointer;
+            border: 1px solid transparent; border-radius: 9px;
+            background: transparent; color: var(--muted);
+        }
+        .tab:hover { color: var(--ink); background: #eceff3; }
+        .tab[aria-selected="true"] {
+            background: var(--accent); border-color: var(--accent);
+            color: #fff; font-weight: 600;
+        }
+        .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .tab-panel[hidden] { display: none; }
+
+        /* ------------------------------------------------------------------ *
+         * Forecast overlay: chips under the price chart                       *
+         * ------------------------------------------------------------------ */
+        .forecast-note {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            margin: 10px 0 0; font-size: .8rem; color: var(--muted);
+        }
+        .chip {
+            font-size: .74rem; padding: 3px 9px; border-radius: 999px;
+            border: 1px solid var(--line); background: #fff; color: var(--muted);
+            white-space: nowrap;
+        }
+        .chip.is-model { border-color: #bfe3ea; background: var(--accent-soft); color: #085562; }
+        .chip.is-warn { border-color: #f3c9c4; background: var(--warn-soft); color: var(--warn); }
+        .retry-btn {
+            font: inherit; font-size: .78rem; padding: 5px 11px; cursor: pointer;
+            border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink);
+        }
+        .retry-btn:hover { border-color: #c9d2db; }
+        .retry-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        /* ------------------------------------------------------------------ *
+         * Small screens: nav wraps, charts shrink, one column everywhere.   *
+         * ------------------------------------------------------------------ */
+        @media (max-width: 640px) {
+            .chart-wrap { height: 250px; }
+            .result-price { font-size: 2rem; }
+            .tab { flex: 1 1 auto; text-align: center; font-size: .82rem; padding: 8px 10px; }
+            .tf-note { display: none; }
+            .info-pop { max-width: 88vw; }
+        }
     </style>
 </head>
 <body>
-<header class="brandbar">
-    <div class="brandbar-inner">
-        <div class="brand">
-            <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="GreenEagle-Logo">
-            <h1>Heizölpreis Prognose für die Schweiz</h1>
-        </div>
-    </div>
-</header>
-<div class="wrap">
-    <p class="subtitle">Heizölpreise für die Schweiz: Historie und Prognose für die kommende Woche auf Basis des Hopsworks-Modells. Lassen Sie die Felder leer, um die jeweils letzten verfügbaren Daten zu verwenden.</p>
+    <h1>Heizölpreis-Prognose</h1>
+    <p class="sub">Preise, Rheinpegel und Prognose für Heizöl in der Schweiz</p>
 
-    <div class="card">
-        <div class="chart-head">
-            <h2>Preis- und Nachfragengeschichte (CH)</h2>
-            <span class="latest" id="latestInfo"></span>
-            <select class="tf-select" id="timeframe" aria-label="Zeitraum">
-                <option value="30">1 Monat</option>
-                <option value="90">3 Monate</option>
-                <option value="180">6 Monate</option>
-                <option value="365" selected>1 Jahr</option>
-                <option value="1825">5 Jahre</option>
-                <option value="all">Alle</option>
-            </select>
-        </div>
-        <div class="history-box">
-            <canvas id="historyChart" height="260"></canvas>
-            <div class="history-hint" id="historyHint">Historische Preise werden geladen&hellip;</div>
-        </div>
-        <p class="hint">Tagesdurchschnittspreis (CHF/100l) und Nachfrageindex von heizoel24.ch.</p>
+    <!-- Tabs: the three views live in one box. Panels are switched, not loaded,
+         so every chart keeps its data while another tab is open. -->
+    <div class="tabs" id="viewTabs" role="tablist" aria-label="Ansichten">
+        <button type="button" class="tab" id="tab-preise" role="tab"
+                aria-selected="true" aria-controls="panel-preise">Preise &amp; Prognose</button>
+        <button type="button" class="tab" id="tab-rhein" role="tab"
+                aria-selected="false" aria-controls="panel-rhein" tabindex="-1">Rhein Wasserstand</button>
+        <button type="button" class="tab" id="tab-fracht" role="tab"
+                aria-selected="false" aria-controls="panel-fracht" tabindex="-1">Fracht &amp; Umschlag Rheinhäfen</button>
     </div>
 
-    <div class="card" id="rheinCard">
-        <div class="chart-head">
-            <h2>Rhein-Pegel: Basel-Rheinhalle &amp; Engstelle Kaub</h2>
-            <span class="latest" id="rheinLatest"></span>
-            <select class="tf-select" id="rheinTimeframe" aria-label="Zeitraum Pegel">
-                <option value="30">1 Monat</option>
-                <option value="90">3 Monate</option>
-                <option value="180" selected>6 Monate</option>
-                <option value="365">1 Jahr</option>
-            </select>
-        </div>
-        <div class="rhein-stats" id="rheinStats"></div>
-        <div class="history-box">
-            <canvas id="rheinChart" height="240"></canvas>
-            <div class="history-hint" id="rheinHint">Pegeldaten werden geladen&hellip;</div>
-        </div>
-        <p class="hint">Tagesminimum der Pegel in cm (massgebend fuer die zulassige Abladetiefe eines Tankers). Die <strong>Engstelle</strong> ist der tiefere Wert beider Stationen: Ein Tanker auf dem Weg nach Basel muss Kaub (Rhein-km 546) passieren. Niedrigwasser: Basel unter 350 cm, Kaub unter 30 cm. Quelle: data.bs.ch, WSV Pegelonline, LINDAS/BAFU.</p>
-
-        <h3>Fracht der Schweizer Rheinhaefen: Mineraloel (Tonnen)</h3>
-        <div class="chart-box">
-            <canvas id="cargoChart" height="200"></canvas>
-        </div>
-        <p class="hint" id="cargoHint"></p>
+    <!-- One time filter for all time-based charts (price + Rhine levels). -->
+    <div class="time-filter" id="timeFilter" role="group" aria-label="Zeitfilter für alle Diagramme">
+        <span class="tf-label">Zeitraum</span>
+        <button type="button" class="tf-btn" data-days="30">1 Monat</button>
+        <button type="button" class="tf-btn is-active" data-days="90">3 Monate</button>
+        <button type="button" class="tf-btn" data-days="180">6 Monate</button>
+        <button type="button" class="tf-btn" data-days="365">1 Jahr</button>
+        <button type="button" class="tf-btn" data-days="1825">5 Jahre</button>
+        <button type="button" class="tf-btn" data-days="all">Alle</button>
+        <span class="tf-note" id="timeNote">gilt für Preis- und Pegel-Diagramm</span>
     </div>
 
-    <div class="card">
-        <form id="predictionForm">
-            <div class="row">
-                <label for="date">
-                    Datum (optional)
-                    <input type="date" id="date" name="date">
-                </label>
-                <label for="current_price">
-                    Aktueller Preis (CHF, optional)
-                    <input type="number" step="0.01" id="current_price" name="current_price" placeholder="automatisch">
-                </label>
-                <label for="current_demand">
-                    Aktuelle Nachfrage (optional)
-                    <input type="number" step="0.01" id="current_demand" name="current_demand" placeholder="automatisch">
-                </label>
+    <main>
+        <div class="tab-panel" id="panel-preise" role="tabpanel" aria-labelledby="tab-preise">
+        <section class="card" id="preise">
+            <div class="card-head">
+                <h2>Heizölpreise</h2>
+                <button type="button" class="info-btn" data-info="priceInfo" aria-label="Erklärung zum Preisdiagramm">i</button>
+                <div class="info-pop" id="priceInfo" role="tooltip" hidden>
+                    Tagesdurchschnittspreis in CHF pro 100 Liter (gepunktete Linie)
+                    und 7-Tage-Mittel (durchgezogene Linie). Ab der letzten
+                    Messung – markiert durch die senkrechte Linie – geht es
+                    gestrichelt weiter: der erste Punkt kommt vom Wochenmodell,
+                    die Linie danach vom Vorhersagemodell in 7-Tage-Schritten.
+                    Das flächige Band ist keine Modellunsicherheit, sondern eine
+                    Schätzung aus der beobachteten Preisvolatilität (Standard-
+                    abweichung der 7-Tage-Änderung über drei Jahre, wächst mit
+                    der Wurzel des Horizonts). Fahre mit der Maus über das
+                    Diagramm: im Pegel-Diagramm erscheint dieselbe Datumslinie.
+                </div>
             </div>
-            <button type="submit" id="submitBtn">Prognose erstellen</button>
-            <span class="status" id="status"></span>
-        </form>
-        <p class="hint">Das Modell prognostiziert den Preis für die Woche nach dem angegebenen Datum, basierend auf gespeicherten Merkmalen sowie ggf. von Ihnen angegebenen Werten.</p>
-    </div>
-
-    <div class="error" id="error"></div>
-
-    <div class="result" id="result">
-        <div class="card">
-            <div class="result-head">
-                <span class="result-date">Eingabedatum: <strong id="resultDate"></strong></span>
-                <span class="price" id="resultPrice"></span>
-                <span class="result-date">prognostizierter Preis für die nächste Woche</span>
+            <div class="chart-wrap">
+                <div class="skeleton" id="priceSkeleton">
+                    <div class="skeleton-line w40"></div>
+                    <div class="skeleton-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                </div>
+                <canvas id="priceChart" class="chart-canvas" hidden></canvas>
             </div>
-            <div class="chart-box">
-                <canvas id="predictionChart" height="120"></canvas>
+            <!-- The forecast belongs to the chart: the history line continues as
+                 a dotted line, so origin, horizon and band are stated here. -->
+            <div class="forecast-note" id="forecastNote" aria-live="polite"></div>
+            <div class="error-card" id="forecastError" hidden></div>
+        </section>
+
+        <!-- Forecast: result card + form on the left, model features on the right.
+             It belongs to the price tab because the chart draws the same curve. -->
+        <section class="two-col" id="prognose">
+            <div class="col-main">
+                <div class="card result-card" id="resultCard" hidden>
+                    <div class="result-label" id="resultLabel">Prognose</div>
+                    <div class="result-price">
+                        <span id="resultPrice">–</span>
+                        <span class="unit">CHF/100 l</span>
+                    </div>
+                    <div class="result-meta" id="resultMeta"></div>
+                    <div class="result-delta" id="resultDelta" hidden></div>
+                </div>
+
+                <form class="card forecast-form" id="forecastForm">
+                    <h2>Prognose erstellen</h2>
+                    <div class="field">
+                        <input type="date" id="dateInput" placeholder=" " required>
+                        <label for="dateInput">Eingabedatum</label>
+                        <p class="field-hint" id="dateHint"></p>
+                    </div>
+                    <div class="field">
+                        <input type="number" id="priceInput" step="0.01" min="0" placeholder=" ">
+                        <label for="priceInput">Aktueller Preis (CHF/100 l)</label>
+                        <p class="field-hint" id="priceHint"></p>
+                    </div>
+                    <div class="field">
+                        <input type="number" id="demandInput" step="1" min="0" placeholder=" ">
+                        <label for="demandInput">Nachfrageindex</label>
+                        <p class="field-hint" id="demandHint"></p>
+                    </div>
+                    <button type="submit" class="primary-btn" id="predictBtn">Prognose berechnen</button>
+                    <div id="error" class="error" hidden></div>
+                </form>
             </div>
-            <h3>Vom Modell verwendete Merkmale</h3>
-            <table id="featureTable">
-                <thead>
-                    <tr><th>Merkmal</th><th style="text-align:right">Wert</th></tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-    </div>
-</div>
-<footer class="powered-footer">
-    <span>Bereitgestellt von <a href="https://www.greeneagle.ai" target="_blank" rel="noopener">greeneagle.ai</a></span>
-</footer>
-<script>
-    // ---------- Preis- und Nachfrage-Diagramm ----------
-    let historyData = null;
-    let historyChart = null;
 
-    function thinIndices(n, max) {
-        if (n <= max) return null;
-        const stride = Math.ceil(n / max);
-        const idx = [];
-        for (let i = 0; i < n; i += stride) idx.push(i);
-        if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
-        return idx;
-    }
+            <div class="col-side">
+                <div class="card features-card">
+                    <div class="card-head">
+                        <h2>Vom Modell verwendete Merkmale</h2>
+                        <button type="button" class="info-btn" data-info="featureInfo" aria-label="Erklärung zur Merkmals-Tabelle">i</button>
+                        <div class="info-pop" id="featureInfo" role="tooltip" hidden>
+                            Das Modell berechnet den Preis aus Preis- und Nachfrage-
+                            Durchschnittswerten, Kalender-/Saisonwerten, Rheinpegel und
+                            Ölmarktpreisen. Der graue Name darunter ist der technische
+                            Spaltenname im Feature Store.
+                        </div>
+                    </div>
+                    <div id="features"><p class="feature-empty">Noch keine Prognose berechnet.</p></div>
+                </div>
+            </div>
+        </section>
+        </div><!-- /panel-preise -->
 
-    function renderHistory() {
-        if (!historyData || !historyData.dates || !historyData.dates.length) return;
-        const dates = historyData.dates;
-        const tf = document.getElementById('timeframe').value;
-        let start = 0;
-        if (tf !== 'all') {
-            const end = new Date(dates[dates.length - 1]);
-            const from = new Date(end);
-            from.setDate(from.getDate() - parseInt(tf, 10));
-            while (start < dates.length && new Date(dates[start]) < from) start++;
-        }
-        const thin = thinIndices(dates.length - start, 1500);
-        const pick = (arr) => thin
-            ? thin.map(function (i) { return arr[start + i]; })
-            : arr.slice(start);
-        const labels = pick(dates);
-        const prices = pick(historyData.price);
-        const demands = pick(historyData.demand);
+        <div class="tab-panel" id="panel-rhein" role="tabpanel" aria-labelledby="tab-rhein" hidden>
+        <section class="card" id="rhein">
+            <div class="card-head">
+                <h2>Rhein-Pegel</h2>
+                <button type="button" class="info-btn" data-info="rheinInfo" aria-label="Erklärung zum Pegel-Diagramm">i</button>
+                <div class="info-pop" id="rheinInfo" role="tooltip" hidden>
+                    Gezeigt wird das Tagesminimum je Pegel – es bestimmt, wie tief ein
+                    Tanker beladen werden darf. Als "Engstelle" gilt der kleinere Wert
+                    von Basel-Rheinhalle und Kaub: Kaub ist die flachste Stelle der
+                    Rheinstrecke. Die beiden gestrichelten Linien sind die
+                    Niedrigwasser-Marken 350 cm (Basel) und 30 cm (Kaub). Kaub wird
+                    von der WSV nur für die letzten rund 30 Tage veröffentlicht, fehlt
+                    also in längeren Zeiträumen.
+                </div>
+            </div>
+            <div class="stats" id="rheinStats">
+                <div class="stat"><div class="skeleton-line w60"></div><div class="skeleton-line stat-skeleton"></div></div>
+                <div class="stat"><div class="skeleton-line w60"></div><div class="skeleton-line stat-skeleton"></div></div>
+                <div class="stat"><div class="skeleton-line w40"></div><div class="skeleton-line stat-skeleton"></div></div>
+                <div class="stat"><div class="skeleton-line w60"></div><div class="skeleton-line stat-skeleton"></div></div>
+            </div>
+            <div class="chart-wrap">
+                <div class="skeleton" id="rheinSkeleton">
+                    <div class="skeleton-line w40"></div>
+                    <div class="skeleton-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                </div>
+                <canvas id="rheinChart" class="chart-canvas" hidden></canvas>
+            </div>
+        </section>
+        </div><!-- /panel-rhein -->
 
-        if (historyChart) historyChart.destroy();
-        const ctx = document.getElementById('historyChart').getContext('2d');
-        historyChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: 'Preis (CHF/100l)',
-                        data: prices,
-                        borderColor: '#38f75c',
-                        backgroundColor: 'rgba(56,247,92,0.10)',
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        pointHoverRadius: 3,
-                        tension: 0.15,
-                        spanGaps: true,
-                        fill: true,
-                        yAxisID: 'y'
-                    },
-                    {
-                        label: 'Nachfrageindex',
-                        data: demands,
-                        borderColor: '#066aab',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        pointHoverRadius: 3,
-                        tension: 0.15,
-                        spanGaps: true,
-                        fill: false,
-                        yAxisID: 'y1'
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { position: 'top', labels: { boxWidth: 12 } },
-                    tooltip: {
-                        callbacks: {
-                            label: function (item) {
-                                const v = item.parsed.y;
-                                return (v === null || v === undefined)
-                                    ? item.dataset.label + ': -'
-                                    : item.dataset.label + ': ' + Number(v).toFixed(2);
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 },
-                        grid: { display: false }
-                    },
-                    y: {
-                        position: 'left',
-                        beginAtZero: false,
-                        title: { display: true, text: 'CHF/100l' }
-                    },
-                    y1: {
-                        position: 'right',
-                        beginAtZero: true,
-                        title: { display: true, text: 'Nachfrage' },
-                        grid: { drawOnChartArea: false }
-                    }
-                }
-            }
-        });
+        <div class="tab-panel" id="panel-fracht" role="tabpanel" aria-labelledby="tab-fracht" hidden>
+        <section class="card" id="fracht">
+            <div class="card-head">
+                <h2>Rhein-Fracht</h2>
+                <button type="button" class="info-btn" data-info="cargoInfo" aria-label="Erklärung zum Fracht-Diagramm">i</button>
+                <div class="info-pop" id="cargoInfo" role="tooltip" hidden>
+                    Monatliche Mineralölzufuhr über den Rhein (Gruppe 07) und die
+                    Position 07.23 für Gas, Diesel und Heizöl in Tonnen. Die Zahlen
+                    des Hafenamts erscheinen 4–7 Wochen nach dem Berichtsmonat, sind
+                    also eine historische Grösse und nie Live-Eingabe der Prognose.
+                </div>
+            </div>
+            <div class="chart-wrap">
+                <div class="skeleton" id="cargoSkeleton">
+                    <div class="skeleton-line w40"></div>
+                    <div class="skeleton-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                </div>
+                <canvas id="cargoChart" class="chart-canvas" hidden></canvas>
+            </div>
+            <p class="sub" id="cargoNote" style="margin: 10px 0 0;"></p>
+        </section>
+        </div><!-- /panel-fracht -->
 
-        let li = dates.length - 1;
-        while (li > 0 && historyData.price[li] === null) li--;
-        const latest = historyData.price[li];
-        document.getElementById('latestInfo').textContent =
-            (latest === null || latest === undefined) ? '' : 'Aktuell: ' + latest.toFixed(2) + ' CHF (' + dates[li] + ')';
-    }
+    </main>
 
-    function loadHistory() {
-        fetch('/api/history')
-            .then(function (r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            })
-            .then(function (data) {
-                historyData = data;
-                renderHistory();
-                document.getElementById('historyHint').style.display = 'none';
-            })
-            .catch(function (err) {
-                document.getElementById('historyHint').textContent =
-                    'Preisgeschichte konnte nicht geladen werden (' + (err.message || err) + ')';
-            });
-    }
+    <script>
+        // Readable feature labels provided by src/frontend/app.py.
+        const FEATURE_LABELS = {{ feature_labels | tojson }};
 
-    document.getElementById('timeframe').addEventListener('change', renderHistory);
-    loadHistory();
-
-    // ---------- Rhein-Pegel & Fracht ----------
-    let rheinData = null;
-    let rheinChart = null;
-    let cargoChart = null;
-
-    function fmtTonnes(v) {
-        if (v === null || v === undefined) return null;
-        return Number(v).toLocaleString('de-CH', { maximumFractionDigits: 0 });
-    }
-
-    function addStat(label, value, note, alert) {
-        const div = document.createElement('div');
-        div.className = 'stat' + (alert ? ' alert' : '');
-        const labelEl = document.createElement('div');
-        labelEl.className = 'stat-label';
-        labelEl.textContent = label;
-        const valueEl = document.createElement('div');
-        valueEl.className = 'stat-value';
-        valueEl.textContent = value;
-        div.appendChild(labelEl);
-        div.appendChild(valueEl);
-        if (note) {
-            const noteEl = document.createElement('div');
-            noteEl.className = 'stat-note';
-            noteEl.textContent = note;
-            div.appendChild(noteEl);
-        }
-        document.getElementById('rheinStats').appendChild(div);
-    }
-
-    function renderRheinStats() {
-        document.getElementById('rheinStats').innerHTML = '';
-        const thresholds = rheinData.thresholds || {};
-        const snap = rheinData.snapshot || {};
-        const stations = snap.stations || {};
-        const basel = stations.basel || {};
-        const kaub = stations.kaub || {};
-
-        const levelOf = (s) => (s.wsv_level_cm != null
-            ? Number(s.wsv_level_cm)
-            : (s.bs_ch_level_cm != null ? Number(s.bs_ch_level_cm) : null));
-        const stampOf = (s) => {
-            const ts = s.wsv_timestamp_utc || s.bs_ch_timestamp_utc || s.lindas_timestamp_utc || '';
-            return ts ? ' · ' + ts.slice(11, 16) + ' UTC' : '';
+        const fmt = (v, digits = 2) => Number(v).toLocaleString('de-CH', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+        const fmtInt = (v) => Number(v).toLocaleString('de-CH');
+        // Date arithmetic in local dates: toISOString() would shift the day back
+        // for every zone east of UTC.
+        const addDays = (dateStr, days) => {
+            const d = new Date(dateStr + 'T00:00:00');
+            d.setDate(d.getDate() + days);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
         };
-        const thresholdOf = (s, fallback) => (s.low_water_cm != null ? Number(s.low_water_cm) : Number(fallback));
-        const cm = (v) => (v === null || v === undefined ? '—' : Math.round(v) + ' cm');
 
-        const baselLevel = levelOf(basel);
-        const kaubLevel = levelOf(kaub);
-        const baselLow = thresholdOf(basel, thresholds.basel_cm);
-        const kaubLow = thresholdOf(kaub, thresholds.kaub_cm);
-        const isLow = snap.low_water_flag === 1;
+        /* ------------------------------------------------------------------ *
+         * Shared state: one time window and one hover date for both charts. *
+         * ------------------------------------------------------------------ */
+        let timeframe = 90;          // days, 'all' = whole history
+        let hoverDate = null;        // date highlighted in every time-based chart
+        let priceData = null;        // /api/history -> dates, price, demand
+        let priceMean7 = [];         // 7-day mean of priceData.price
+        let forecastData = null;     // /api/forecast -> origin_date + forecast points
+        let levelData = null;        // /api/rhein -> levels
+        let cargoData = null;        // /api/rhein -> cargo
+        let priceChart = null, rheinChart = null, cargoChart = null;
+        const timeCharts = () => [priceChart, rheinChart].filter(Boolean);
 
-        addStat('Basel-Rheinhalle', cm(baselLevel),
-            'Niedrigwasser < ' + Math.round(baselLow) + ' cm' + stampOf(basel),
-            baselLevel !== null && baselLevel < baselLow);
-        addStat('Kaub (Engstelle)', cm(kaubLevel),
-            'Niedrigwasser < ' + Math.round(kaubLow) + ' cm' + stampOf(kaub),
-            kaubLevel !== null && kaubLevel < kaubLow);
-
-        const stationNames = { kaub: 'Kaub', basel: 'Basel' };
-        addStat('Engstelle: ' + (stationNames[snap.bottleneck_station] || 'Engstelle'),
-            cm(snap.bottleneck_level_cm), 'limitiert die Zuladung des Tankers', isLow);
-        addStat('Niedrigwasser-Status', isLow ? 'Niedrigwasser' : 'normal',
-            snap.collected_at_utc ? 'Stand ' + snap.collected_at_utc.replace('T', ' ').slice(0, 16) + ' UTC' : '',
-            isLow);
-
-        const dates = ((rheinData.levels || {}).dates) || [];
-        document.getElementById('rheinLatest').textContent =
-            dates.length ? 'Letzter Messtag: ' + dates[dates.length - 1] : '';
-    }
-
-    function renderRheinChart() {
-        const levels = rheinData.levels || {};
-        const dates = levels.dates || [];
-        if (!dates.length) return;
-
-        const tf = parseInt(document.getElementById('rheinTimeframe').value, 10);
-        const end = new Date(dates[dates.length - 1]);
-        const from = new Date(end);
-        from.setDate(from.getDate() - tf);
-        let start = 0;
-        while (start < dates.length && new Date(dates[start]) < from) start++;
-
-        const pick = (arr) => arr.slice(start);
-        const labels = pick(dates);
-        const thresholds = rheinData.thresholds || {};
-        const flat = (v) => labels.map(function () { return v; });
-
-        if (rheinChart) rheinChart.destroy();
-        const ctx = document.getElementById('rheinChart').getContext('2d');
-        rheinChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: 'Engstelle (min Basel/Kaub)',
-                        data: pick(levels.bottleneck),
-                        borderColor: '#066aab',
-                        backgroundColor: 'rgba(6,106,171,0.10)',
-                        borderWidth: 2.5,
-                        pointRadius: 0,
-                        pointHoverRadius: 3,
-                        tension: 0.15,
-                        spanGaps: true,
-                        fill: true
-                    },
-                    {
-                        label: 'Basel-Rheinhalle',
-                        data: pick(levels.basel),
-                        borderColor: '#38f75c',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        pointHoverRadius: 3,
-                        tension: 0.15,
-                        spanGaps: true,
-                        fill: false
-                    },
-                    {
-                        label: 'Kaub',
-                        data: pick(levels.kaub),
-                        borderColor: '#f0a202',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        pointHoverRadius: 3,
-                        tension: 0.15,
-                        spanGaps: true,
-                        fill: false
-                    },
-                    {
-                        label: 'Marke Basel (' + Math.round(thresholds.basel_cm) + ' cm)',
-                        data: flat(thresholds.basel_cm),
-                        borderColor: 'rgba(236,81,70,0.7)',
-                        borderWidth: 1,
-                        borderDash: [6, 6],
-                        pointRadius: 0,
-                        fill: false,
-                        tension: 0
-                    },
-                    {
-                        label: 'Marke Kaub (' + Math.round(thresholds.kaub_cm) + ' cm)',
-                        data: flat(thresholds.kaub_cm),
-                        borderColor: 'rgba(236,81,70,0.45)',
-                        borderWidth: 1,
-                        borderDash: [3, 5],
-                        pointRadius: 0,
-                        fill: false,
-                        tension: 0
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { position: 'top', labels: { boxWidth: 12 } },
-                    tooltip: {
-                        callbacks: {
-                            label: function (item) {
-                                const v = item.parsed.y;
-                                return (v === null || v === undefined)
-                                    ? item.dataset.label + ': -'
-                                    : item.dataset.label + ': ' + Math.round(v) + ' cm';
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: { ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 }, grid: { display: false } },
-                    y: { beginAtZero: false, title: { display: true, text: 'Pegel (cm)' } }
-                }
+        // Vertical guide line at the hovered date, drawn in every time chart.
+        const crosshairPlugin = {
+            id: 'crosshair',
+            afterDatasetsDraw(chart) {
+                const labels = chart.data.labels || [];
+                if (!hoverDate || !labels.length) return;
+                const idx = labels.indexOf(hoverDate);
+                if (idx < 0) return;
+                const x = chart.scales.x.getPixelForValue(idx);
+                const {top, bottom} = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.setLineDash([5, 4]);
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = 'rgba(11, 114, 133, .8)';
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, bottom);
+                ctx.stroke();
+                ctx.restore();
             }
-        });
-    }
+        };
 
-    function renderCargoChart() {
-        const cargo = rheinData.cargo || {};
-        const months = cargo.months || [];
-        if (!months.length) return;
-
-        if (cargoChart) cargoChart.destroy();
-        const ctx = document.getElementById('cargoChart').getContext('2d');
-        cargoChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: months,
-                datasets: [
-                    {
-                        label: 'Mineralöl Zufuhr (Gruppe 07)',
-                        data: cargo.oil_zufuhr,
-                        backgroundColor: 'rgba(6,106,171,0.75)'
-                    },
-                    {
-                        label: 'Heizöl/Diesel/Gas Zufuhr (07.23)',
-                        data: cargo.heating_oil_zufuhr,
-                        backgroundColor: 'rgba(56,247,92,0.85)'
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { position: 'top', labels: { boxWidth: 12 } },
-                    tooltip: {
-                        callbacks: {
-                            label: function (item) {
-                                const v = item.parsed.y;
-                                return (v === null || v === undefined)
-                                    ? item.dataset.label + ': -'
-                                    : item.dataset.label + ': ' + fmtTonnes(v) + ' t';
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: { ticks: { autoSkip: true, maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-                    y: { beginAtZero: true, title: { display: true, text: 'Tonnen' } }
-                }
+        // Where the measured history ends and the dotted forecast begins.
+        const todayPlugin = {
+            id: 'todayLine',
+            afterDatasetsDraw(chart) {
+                if (chart.canvas.id !== 'priceChart') return;
+                if (!forecastData || !forecastData.origin_date) return;
+                const idx = (chart.data.labels || []).indexOf(forecastData.origin_date);
+                if (idx < 0) return;
+                const x = chart.scales.x.getPixelForValue(idx);
+                const {top, bottom} = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.setLineDash([2, 3]);
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = 'rgba(31, 41, 51, .55)';
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, bottom);
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(31, 41, 51, .75)';
+                ctx.font = '10px system-ui, sans-serif';
+                ctx.fillText('letzte Messung', x + 5, top + 11);
+                ctx.restore();
             }
-        });
+        };
 
-        const latest = cargo.latest_month
-            ? 'Letzter Bericht: Berichtsmonat ' + cargo.latest_month + ' (publiziert ' + cargo.latest_published + '). '
-            : '';
-        document.getElementById('cargoHint').textContent = latest
-            + 'Zufuhr in Tonnen, Schweizer Rheinhäfen (Port of Switzerland), Warengattungen nach NST-2007. '
-            + 'Die Bulletins erscheinen 4–7 Wochen nach dem Berichtsmonat - die Fracht ist damit eine '
-            + 'historische Grösse und wird nie als aktueller Modell-Eingabe verwendet.';
-    }
-
-    function loadRhein() {
-        fetch('/api/rhein')
-            .then(function (r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            })
-            .then(function (data) {
-                rheinData = data;
-                const hint = document.getElementById('rheinHint');
-                const levels = data.levels || {};
-                const cargo = data.cargo || {};
-
-                if (data.snapshot) renderRheinStats();
-                if (cargo.months && cargo.months.length) renderCargoChart();
-                else document.getElementById('cargoHint').textContent =
-                    'Frachtdaten sind derzeit nicht verfügbar.';
-
-                if (levels.dates && levels.dates.length) {
-                    renderRheinChart();
-                    hint.style.display = 'none';
-                } else {
-                    hint.textContent = 'Pegeldaten sind derzeit nicht verfügbar.';
-                    if (!data.snapshot) {
-                        addStat('Rheindaten', 'nicht verfügbar',
-                            (data.errors && Object.values(data.errors)[0]) || '', true);
-                    }
-                }
-            })
-            .catch(function (err) {
-                document.getElementById('rheinHint').textContent =
-                    'Pegeldaten konnten nicht geladen werden (' + (err.message || err) + ')';
-                document.getElementById('cargoHint').textContent =
-                    'Frachtdaten konnten nicht geladen werden.';
-            });
-    }
-
-    document.getElementById('rheinTimeframe').addEventListener('change', function () {
-        if (rheinData) renderRheinChart();
-    });
-    loadRhein();
-
-    // ---------- Prognose-Formular ----------
-    let chart = null;
-
-    function formatValue(v) {
-        if (v === null || v === undefined) return '—';
-        if (typeof v === 'number') {
-            if (Math.abs(v) >= 100) return v.toFixed(2);
-            return parseFloat(v.toFixed(4)).toString();
+        // Value of a series (array aligned with `dates`) at a given date.
+        function valueAt(dates, values, date) {
+            if (!dates || !values) return null;
+            const idx = dates.indexOf(date);
+            if (idx < 0) return null;
+            const v = values[idx];
+            return v === null || v === undefined || Number.isNaN(v) ? null : v;
         }
-        return String(v);
-    }
 
-    function render(data) {
-        const f = data.features || {};
-        const isForward = data.model === 'forward_forecast';
-        const dateLabel = isForward
-            ? `${data.date} · Forward-Prognose (${data.forecast_horizon_days} Tage ab ${data.origin_date})`
-            : data.date;
-
-        document.getElementById('resultDate').textContent = dateLabel;
-        document.getElementById('resultPrice').textContent =
-            'CHF ' + Number(data.prediction_next_week_price).toFixed(2);
-
-        // Diagramm: 7-Tage-Durchschnitt -> aktuell -> Vorhersage für nächste Woche
-        const mean7 = f.origin_price_mean_7d != null ? f.origin_price_mean_7d : f.price_mean_7d;
-        const current = f.origin_current_price != null ? f.origin_current_price : f.current_price;
-        const values = [
-            mean7 != null ? Number(mean7) : null,
-            current != null ? Number(current) : null,
-            Number(data.prediction_next_week_price)
-        ];
-        if (chart) chart.destroy();
-        const ctx = document.getElementById('predictionChart').getContext('2d');
-        chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: ['7-Tage-Durchschnitt', 'Aktuell', 'Nächste Woche (Prognose)'],
-                datasets: [{
-                    label: 'Preis (CHF)',
-                    data: values,
-                    borderColor: '#38f75c',
-                    backgroundColor: 'rgba(56,247,92,0.15)',
-                    tension: 0.2,
-                    spanGaps: true,
-                    pointRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: false } }
+        // Mean of the last `window` values, ignoring gaps (the 7-day line).
+        function movingAverage(values, window) {
+            const filled = (v) => v !== null && v !== undefined && !Number.isNaN(v);
+            const out = new Array(values.length).fill(null);
+            let sum = 0, count = 0;
+            for (let i = 0; i < values.length; i++) {
+                if (filled(values[i])) { sum += values[i]; count++; }
+                if (i >= window && filled(values[i - window])) { sum -= values[i - window]; count--; }
+                out[i] = count ? sum / count : null;
             }
-        });
+            return out;
+        }
 
-        // Merkmalstabelle
-        const tbody = document.querySelector('#featureTable tbody');
-        tbody.innerHTML = '';
-        Object.keys(f).forEach(function (key) {
-            const tr = document.createElement('tr');
-            const tdName = document.createElement('td');
-            tdName.textContent = key;
-            const tdVal = document.createElement('td');
-            tdVal.className = 'val';
-            tdVal.textContent = formatValue(f[key]);
-            tr.appendChild(tdName);
-            tr.appendChild(tdVal);
-            tbody.appendChild(tr);
-        });
+        function setHover(date) {
+            if (date === hoverDate) return;
+            hoverDate = date;
+            timeCharts().forEach((c) => c.update('none'));
+        }
 
-        document.getElementById('result').classList.add('show');
-    }
-
-    document.getElementById('predictionForm').addEventListener('submit', function (e) {
-        e.preventDefault();
-        const errorEl = document.getElementById('error');
-        const statusEl = document.getElementById('status');
-        const btn = document.getElementById('submitBtn');
-        errorEl.classList.remove('show');
-        errorEl.textContent = '';
-        statusEl.textContent = 'Prognose wird erstellt…';
-        btn.disabled = true;
-
-        const body = {};
-        const d = document.getElementById('date').value;
-        const cp = parseFloat(document.getElementById('current_price').value);
-        const cd = parseFloat(document.getElementById('current_demand').value);
-        if (d) body.date = d;
-        if (!isNaN(cp)) body.current_price = cp;
-        if (!isNaN(cd)) body.current_demand = cd;
-
-        fetch('/predict', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        })
-        .then(function (response) {
-            return response.text().then(function (text) {
-                var data;
-                try {
-                    data = JSON.parse(text);
-                } catch (e) {
-                    data = { error: text ? ('Fehler im Prognosedienst: ' + text) : ('Prognose fehlgeschlagen (HTTP ' + response.status + ')') };
+        function handleHover(chart, evt, elements) {
+            const labels = chart.data.labels || [];
+            if (!labels.length) return;
+            let date = null;
+            if (elements && elements.length) {
+                date = labels[elements[0].index];
+            } else {
+                const area = chart.chartArea;
+                if (area && evt.x >= area.left && evt.x <= area.right) {
+                    const idx = Math.round(chart.scales.x.getValueForPixel(evt.x));
+                    if (idx >= 0 && idx < labels.length) date = labels[idx];
                 }
-                return { ok: response.ok, status: response.status, data: data };
-            });
-        })
-        .then(function (res) {
-            if (!res.ok || res.data.error) {
-                throw new Error(res.data.error || 'Prognose fehlgeschlagen (HTTP ' + res.status + ')');
             }
-            render(res.data);
-        })
-        .catch(function (err) {
-            errorEl.textContent = err.message || String(err);
-            errorEl.classList.add('show');
-            document.getElementById('result').classList.remove('show');
-        })
-        .finally(function () {
-            statusEl.textContent = '';
-            btn.disabled = false;
+            setHover(date);
+        }
+
+        const hoverOptions = {
+            // 'nearest' + x mode keeps the crosshair and the tooltip in step.
+            interaction: {mode: 'index', intersect: false},
+            onHover: (evt, chart, elements) => handleHover(chart, evt, elements),
+            onLeave: () => setHover(null),
+        };
+
+        /* ------------------------------------------------------------------ *
+         * Skeleton loaders: shown until the data of a card has arrived.     *
+         * ------------------------------------------------------------------ */
+        function reveal(canvasId, skeletonId) {
+            document.getElementById(canvasId).hidden = false;
+            document.getElementById(skeletonId).hidden = true;
+        }
+
+        function startSkeletons() {
+            ['priceSkeleton', 'rheinSkeleton', 'cargoSkeleton'].forEach((id) => {
+                document.getElementById(id).hidden = false;
+            });
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Tabs: one box, three views. Panels are hidden, never removed, so   *
+         * a chart in another tab keeps its data.                             *
+         * ------------------------------------------------------------------ */
+        const tabs = Array.from(document.querySelectorAll('#viewTabs [role="tab"]'));
+
+        function selectTab(tab, focus = true) {
+            tabs.forEach((t) => {
+                const selected = t === tab;
+                t.setAttribute('aria-selected', String(selected));
+                t.tabIndex = selected ? 0 : -1;
+                const panel = document.getElementById(t.getAttribute('aria-controls'));
+                if (panel) panel.hidden = !selected;
+            });
+            if (focus) tab.focus();
+            // A chart built while its panel was hidden has no size yet.
+            const charts = timeCharts();
+            if (cargoChart) charts.push(cargoChart);
+            charts.forEach((c) => c.resize());
+        }
+
+        tabs.forEach((tab) => {
+            tab.addEventListener('click', () => selectTab(tab, false));
+            tab.addEventListener('keydown', (e) => {
+                const i = tabs.indexOf(tab);
+                const target = {ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1}[e.key];
+                if (target === undefined) return;
+                e.preventDefault();
+                selectTab(tabs[(target + tabs.length) % tabs.length]);
+            });
         });
-    });
-</script>
+
+        /* ------------------------------------------------------------------ *
+         * Info tooltips (info icon next to a heading)                       *
+         * ------------------------------------------------------------------ */
+        function closeInfos() {
+            document.querySelectorAll('.info-pop').forEach((p) => { p.hidden = true; });
+            document.querySelectorAll('.info-btn').forEach((b) => b.classList.remove('is-open'));
+        }
+        document.querySelectorAll('.info-btn').forEach((btn) => {
+            const pop = document.getElementById(btn.dataset.info);
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const wasOpen = !pop.hidden;
+                closeInfos();
+                pop.hidden = wasOpen;
+                btn.classList.toggle('is-open', !wasOpen);
+                btn.setAttribute('aria-expanded', String(!wasOpen));
+            });
+        });
+        document.addEventListener('click', (e) => { if (!e.target.closest('.info-btn')) closeInfos(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInfos(); });
+
+        /* ------------------------------------------------------------------ *
+         * Global time filter: price chart and level chart share the window. *
+         * ------------------------------------------------------------------ */
+        function windowStart(dates) {
+            if (!dates || !dates.length || timeframe === 'all') return 0;
+            const last = new Date(dates[dates.length - 1] + 'T00:00:00');
+            const from = last.getTime() - timeframe * 86400000;
+            const idx = dates.findIndex((d) => new Date(d + 'T00:00:00').getTime() >= from);
+            return idx < 0 ? 0 : idx;
+        }
+
+        document.querySelectorAll('#timeFilter .tf-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#timeFilter .tf-btn').forEach((b) => b.classList.remove('is-active'));
+                btn.classList.add('is-active');
+                timeframe = btn.dataset.days === 'all' ? 'all' : Number(btn.dataset.days);
+                hoverDate = null;
+                renderPriceChart();
+                renderRheinChart();
+                updateTimeNote();
+            });
+        });
+
+        function updateTimeNote() {
+            const shown = (dates) => (dates && dates.length) ? dates.length - windowStart(dates) : 0;
+            const priceDays = priceData ? priceData.dates.length : 0;
+            const levelDays = levelData ? levelData.dates.length : 0;
+            const first = levelData && levelData.dates.length ? levelData.dates[0] : '–';
+            document.getElementById('timeNote').textContent =
+                `Preis ${shown(priceData ? priceData.dates : [])} Tage · Pegel ${shown(levelData ? levelData.dates : [])} Tage`
+                + (levelDays < priceDays ? ` (Pegelreihe ab ${first})` : '')
+                + (forecastData && forecastData.max_horizon_days
+                    ? ` · Prognose +${forecastData.max_horizon_days} Tage` : '');
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Price chart: measured history plus the dotted forecast curve       *
+         *                                                                    *
+         * The history line is extended into the future: the weekly model     *
+         * gives the first week, the forward model the weeks after that. The  *
+         * band around it is the volatility estimate from /api/forecast - the *
+         * models themselves return a point prediction only.                 *
+         * ------------------------------------------------------------------ */
+        const FORECAST_BAND = 'rgba(18, 152, 178, .15)';
+
+        // The x axis must reach into the future, otherwise the forecast points
+        // have no label to sit on. History days and forecast days are separate
+        // series, so the extra labels are pure axis space.
+        function extendedDates(historyDates) {
+            if (!forecastData || !forecastData.points || !forecastData.points.length) {
+                return historyDates;
+            }
+            const known = new Set(historyDates);
+            const extra = forecastData.points
+                .map((p) => p.date)
+                .filter((d) => !known.has(d));
+            return historyDates.concat(extra);
+        }
+
+        function forecastSeries(dates) {
+            const upper = dates.map(() => null);
+            const lower = dates.map(() => null);
+            const line = dates.map(() => null);
+            const weekly = dates.map(() => null);
+            if (!forecastData || !forecastData.points || !forecastData.points.length) {
+                return [upper, lower, line, weekly];
+            }
+            const points = forecastData.points;
+            const firstIdx = dates.indexOf(points[0].date);
+            const anchor = valueAt(dates, priceData.price, forecastData.origin_date);
+            if (anchor !== null && firstIdx > 0) {
+                // connector: the dotted line must start at the last measured price
+                line[firstIdx - 1] = anchor;
+            }
+            points.forEach((p) => {
+                const i = dates.indexOf(p.date);
+                if (i < 0) return;
+                line[i] = p.value;
+                // rounded: the band is drawn and read to two decimals anyway
+                upper[i] = Math.round((p.value + p.band) * 100) / 100;
+                lower[i] = Math.round((p.value - p.band) * 100) / 100;
+                if (p.model === 'weekly') weekly[i] = p.value;
+            });
+            return [upper, lower, line, weekly];
+        }
+
+        function renderPriceChart() {
+            if (!priceData) return;
+            const start = windowStart(priceData.dates);
+            const historyDates = priceData.dates.slice(start);
+            const dates = extendedDates(historyDates);
+            // history arrays stay aligned with the (longer) label list
+            const pad = (values) => values.concat(new Array(dates.length - values.length).fill(null));
+            const history = [pad(priceData.price.slice(start)), pad(priceMean7.slice(start))];
+            const forecast = forecastSeries(dates);
+            if (priceChart) {
+                priceChart.data.labels = dates;
+                priceChart.data.datasets[0].data = history[0];
+                priceChart.data.datasets[1].data = history[1];
+                forecast.forEach((values, i) => { priceChart.data.datasets[2 + i].data = values; });
+                priceChart.update();
+                return;
+            }
+            priceChart = new Chart(document.getElementById('priceChart'), {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        {label: 'Preis', data: history[0], borderColor: '#0b7285', borderWidth: 2, borderDash: [6, 4], tension: .2, pointRadius: 0},
+                        {label: '7-Tage-Mittel', data: history[1], borderColor: '#f08c00', borderWidth: 2, tension: .2, pointRadius: 0},
+                        // Band: the upper edge is filled down to the next dataset.
+                        {label: 'Band obere Marke', data: forecast[0], borderColor: 'transparent', backgroundColor: FORECAST_BAND, borderWidth: 0, pointRadius: 0, fill: '+1', tension: .2},
+                        {label: 'Band untere Marke', data: forecast[1], borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, fill: false, tension: .2},
+                        {label: 'Prognose (Vorhersagemodell)', data: forecast[2], borderColor: '#1298b2', borderWidth: 2, borderDash: [7, 5], tension: .2, pointRadius: 0},
+                        {label: 'Prognose (Wochenmodell)', data: forecast[3], borderColor: '#d97706', borderWidth: 2, borderDash: [2, 3], tension: 0, pointRadius: 4},
+                    ],
+                },
+                options: {
+                    ...hoverOptions,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                font: {size: 11}, boxWidth: 12,
+                                // the two band edges are one visual element, not two series
+                                filter: (item) => !item.text.startsWith('Band'),
+                            },
+                        },
+                        tooltip: {callbacks: {
+                            label: (item) => `${item.dataset.label}: ${item.parsed.y === null ? 'kein Wert' : fmt(item.parsed.y) + ' CHF/100 l'}`,
+                            // combined tooltip: the Rhine level of the same date
+                            footer: (items) => levelFooter(items[0].label),
+                        }},
+                    },
+                    scales: {
+                        x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},
+                        y: {ticks: {font: {size: 10}, callback: (v) => `${v} CHF`}},
+                    },
+                },
+                plugins: [crosshairPlugin, todayPlugin],
+            });
+            reveal('priceChart', 'priceSkeleton');
+        }
+
+        function levelFooter(date) {
+            if (!levelData) return '';
+            const basel = valueAt(levelData.dates, levelData.basel, date);
+            const kaub = valueAt(levelData.dates, levelData.kaub, date);
+            const parts = [`Rheinpegel Basel: ${basel === null ? 'kein Wert' : fmtInt(basel) + ' cm'}`];
+            if (kaub !== null) parts.push(`Kaub: ${fmtInt(kaub)} cm`);
+            return parts.join(' · ');
+        }
+
+        function priceFooter(date) {
+            if (!priceData) return '';
+            const price = valueAt(priceData.dates, priceData.price, date);
+            return `Heizölpreis: ${price === null ? 'kein Wert' : fmt(price) + ' CHF/100 l'}`;
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Rhine: statistics tiles + level chart                             *
+         * ------------------------------------------------------------------ */
+        let rheinThresholds = {basel_cm: 350, kaub_cm: 30};
+
+        function renderRheinStats(snapshot) {
+            const statsBox = document.getElementById('rheinStats');
+            if (!snapshot) {
+                statsBox.innerHTML = `<div class="stat is-warn">
+                    <div class="label">Basel-Rheinhalle</div>
+                    <div class="value">–</div>
+                    <div class="label">kein aktueller Pegel verfügbar</div>
+                </div>`;
+                return;
+            }
+            const stations = snapshot.stations || {};
+            const tiles = [];
+            const basel = stations.basel;
+            const kaub = stations.kaub;
+            if (basel) {
+                const value = basel.bs_ch_level_cm !== undefined ? basel.bs_ch_level_cm : basel.wsv_level_cm;
+                tiles.push({
+                    label: 'Basel-Rheinhalle', value: fmtInt(value), unit: 'cm',
+                    warn: value < rheinThresholds.basel_cm, note: `Marke ${fmtInt(rheinThresholds.basel_cm)} cm`,
+                });
+            }
+            if (kaub) {
+                tiles.push({
+                    label: 'Kaub', value: fmtInt(kaub.wsv_level_cm), unit: 'cm',
+                    warn: kaub.wsv_level_cm < rheinThresholds.kaub_cm, note: `Marke ${fmtInt(rheinThresholds.kaub_cm)} cm`,
+                });
+            }
+            tiles.push({
+                label: 'Engstelle', value: fmtInt(snapshot.bottleneck_level_cm), unit: 'cm',
+                warn: snapshot.low_water_flag === 1,
+                note: (snapshot.bottleneck_station === 'kaub' ? 'Kaub' : 'Basel') + ' ist begrenzend',
+            });
+            tiles.push({
+                label: 'Niedrigwasser', value: snapshot.low_water_flag ? 'ja' : 'nein', unit: '',
+                warn: !!snapshot.low_water_flag,
+                note: snapshot.collected_at_utc ? 'Stand ' + snapshot.collected_at_utc.slice(0, 16).replace('T', ' ') + ' UTC' : '',
+            });
+            document.getElementById('rheinStats').innerHTML = tiles.map((t) => `
+                <div class="stat ${t.warn ? 'is-warn' : 'is-ok'}">
+                    <div class="label">${t.label}</div>
+                    <div class="value">${t.value} <span class="unit">${t.unit}</span></div>
+                    <div class="label">${t.note}</div>
+                </div>`).join('');
+        }
+
+        function rheinSeries(dates) {
+            const basel = dates.map((d) => valueAt(levelData.dates, levelData.basel, d));
+            const kaub = dates.map((d) => valueAt(levelData.dates, levelData.kaub, d));
+            const bottleneck = dates.map((d) => valueAt(levelData.dates, levelData.bottleneck, d));
+            return [basel, kaub, bottleneck,
+                    dates.map(() => rheinThresholds.basel_cm),
+                    dates.map(() => rheinThresholds.kaub_cm)];
+        }
+
+        function renderRheinChart() {
+            if (!levelData) {
+                document.getElementById('rheinSkeleton').hidden = true;
+                return;
+            }
+            const start = windowStart(levelData.dates);
+            const dates = levelData.dates.slice(start);
+            const series = rheinSeries(dates);
+            if (rheinChart) {
+                rheinChart.data.labels = dates;
+                rheinChart.data.datasets.forEach((ds, i) => { ds.data = series[i]; });
+                rheinChart.update();
+                return;
+            }
+            rheinChart = new Chart(document.getElementById('rheinChart'), {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        {label: 'Basel-Rheinhalle', data: series[0], borderColor: '#0b7285', borderWidth: 2, tension: .2, pointRadius: 0},
+                        {label: 'Kaub', data: series[1], borderColor: '#e8590c', borderWidth: 2, tension: .2, pointRadius: 0},
+                        {label: 'Engstelle (kleinster Pegel)', data: series[2], borderColor: '#1f2933', borderWidth: 2, tension: .2, pointRadius: 0},
+                        {label: `Marke Basel ${rheinThresholds.basel_cm} cm`, data: series[3], borderColor: '#0b7285', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
+                        {label: `Marke Kaub ${rheinThresholds.kaub_cm} cm`, data: series[4], borderColor: '#e8590c', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
+                    ],
+                },
+                options: {
+                    ...hoverOptions,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {labels: {font: {size: 11}, boxWidth: 12}},
+                        tooltip: {callbacks: {
+                            label: (item) => `${item.dataset.label}: ${item.parsed.y === null ? 'kein Wert' : fmtInt(item.parsed.y) + ' cm'}`,
+                            // combined tooltip: the heating-oil price of the same date
+                            footer: (items) => priceFooter(items[0].label),
+                        }},
+                    },
+                    scales: {
+                        x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},
+                        y: {ticks: {font: {size: 10}, callback: (v) => `${v} cm`}},
+                    },
+                },
+                plugins: [crosshairPlugin],
+            });
+            reveal('rheinChart', 'rheinSkeleton');
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Rhine freight (monthly, not part of the daily time window)        *
+         * ------------------------------------------------------------------ */
+        function renderCargoChart(cargo) {
+            const note = document.getElementById('cargoNote');
+            const months = (cargo && cargo.months) || [];
+            const oil = (cargo && cargo.oil_zufuhr) || [];
+            if (!months.length || !oil.some((v) => v !== null)) {
+                if (cargoChart) {
+                    cargoChart.destroy();
+                    cargoChart = null;
+                }
+                document.getElementById('cargoSkeleton').hidden = true;
+                document.getElementById('cargoChart').hidden = true;
+                note.textContent = 'Keine Fracht-Daten verfügbar.';
+                return;
+            }
+            if (cargoChart) cargoChart.destroy();
+            cargoChart = new Chart(document.getElementById('cargoChart'), {
+                type: 'bar',
+                data: {
+                    labels: months,
+                    datasets: [
+                        {label: 'Mineralöl Zufuhr (Gruppe 07)', data: oil, backgroundColor: '#0b7285'},
+                        {label: 'Heizöl, Diesel, Gas (07.23)', data: cargo.heating_oil_zufuhr, backgroundColor: '#f08c00'},
+                    ],
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {labels: {font: {size: 11}, boxWidth: 12}},
+                        tooltip: {callbacks: {label: (item) => `${item.dataset.label}: ${fmtInt(item.parsed.y)} t`}},
+                    },
+                    scales: {
+                        x: {ticks: {maxTicksLimit: 12, font: {size: 10}}},
+                        y: {ticks: {font: {size: 10}, callback: (v) => `${v} t`}},
+                    },
+                },
+            });
+            reveal('cargoChart', 'cargoSkeleton');
+            const latest = cargo.latest_month
+                ? `Berichtsmonat ${cargo.latest_month}` +
+                  (cargo.latest_published ? `, publiziert ${cargo.latest_published}` : '')
+                : 'kein Berichtsmonat verfügbar';
+            note.textContent = `${latest} – Zufuhr in Tonnen, Schweizer Rheinhäfen. `
+                + 'Die Zahlen des Hafenamts erscheinen 4–7 Wochen nach dem Berichtsmonat.';
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Feature table with readable names, units and groups               *
+         * ------------------------------------------------------------------ */
+        // The weekly feature view carries the training label
+        // target_next_week_price. It is the answer for that date, not an input
+        // of the model, so it must never show up in the feature table.
+        const LABEL_KEYS = new Set(['target_next_week_price']);
+
+        function renderFeatures(features) {
+            const box = document.getElementById('features');
+            const keys = Object.keys(features || {}).filter((key) => !LABEL_KEYS.has(key));
+            if (!keys.length) {
+                box.innerHTML = '<p class="feature-empty">Noch keine Prognose berechnet.</p>';
+                return;
+            }
+            const groups = new Map();
+            keys.forEach((key) => {
+                const label = FEATURE_LABELS[key] || {label: key, unit: '', group: 'Weitere Merkmale'};
+                if (!groups.has(label.group)) groups.set(label.group, []);
+                groups.get(label.group).push({key, label, value: features[key]});
+            });
+            box.innerHTML = Array.from(groups.entries()).map(([group, rows]) => `
+                <div class="feature-group">
+                    <div class="feature-group-title">${group}</div>
+                    ${rows.map((row) => `
+                        <div class="feature-row">
+                            <div class="feature-name">${row.label.label}<span class="feature-tech">${row.key}</span></div>
+                            <div class="feature-value">${fmt(row.value)}<span class="feature-unit">${row.label.unit}</span></div>
+                        </div>`).join('')}
+                </div>`).join('');
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Forecast form: prefill with the latest available values           *
+         * ------------------------------------------------------------------ */
+        function prefillForm() {
+            if (!priceData || !priceData.dates.length) return;
+            let last = priceData.dates.length - 1;
+            while (last > 0 && priceData.price[last] === null) last--;
+            const date = priceData.dates[last];
+            const price = priceData.price[last];
+            const demand = priceData.demand[last];
+            const priceInput = document.getElementById('priceInput');
+            const demandInput = document.getElementById('demandInput');
+            const dateInput = document.getElementById('dateInput');
+            dateInput.value = date;
+            // The forward model serves horizons 1..90 days from the origin date,
+            // so the picker must not offer a date the backend would reject.
+            dateInput.min = addDays(date, 1);
+            dateInput.max = addDays(date, 90);
+            if (price !== null) priceInput.value = price;
+            // Keep the placeholder blank: the floating label only works while the
+            // placeholder is shown, so the fallback value is explained in the hint.
+            priceInput.placeholder = ' ';
+            demandInput.placeholder = ' ';
+            document.getElementById('dateHint').textContent =
+                `Prognosen möglich für ${addDays(date, 1)} bis ${addDays(date, 90)} (1–90 Tage ab ${date})`;
+            document.getElementById('priceHint').textContent = price === null
+                ? 'Leer lassen: der Wert kommt aus dem Feature Store'
+                : `Aktueller Preis am ${date}: ${fmt(price)} CHF/100 l – leer lassen für den Feature-Store-Wert`;
+            document.getElementById('demandHint').textContent =
+                'Nachfrageindex (BFS-Verkaufsmenge, Index 2020 = 100) – leer lassen für den Schätzwert';
+        }
+
+        document.getElementById('forecastForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('predictBtn');
+            const error = document.getElementById('error');
+            error.hidden = true;
+            btn.disabled = true;
+            btn.textContent = 'Berechne Prognose …';
+            try {
+                const body = {date: document.getElementById('dateInput').value};
+                const priceValue = parseFloat(document.getElementById('priceInput').value);
+                const demandValue = parseFloat(document.getElementById('demandInput').value);
+                if (!Number.isNaN(priceValue)) body.current_price = priceValue;
+                if (!Number.isNaN(demandValue)) body.current_demand = demandValue;
+                const res = await fetch('/predict', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                const payload = await res.json();
+                if (!res.ok) {
+                    error.textContent = payload.error || 'Prognose fehlgeschlagen.';
+                    error.hidden = false;
+                    return;
+                }
+                const features = payload.features || {};
+                const prediction = payload.prediction_next_week_price;
+                const originDate = payload.origin_date || payload.date;
+                const modelLabel = payload.model === 'forward_forecast'
+                    ? `Vorhersagemodell · Horizont ${payload.forecast_horizon_days} Tage`
+                    : 'Wochenmodell';
+                document.getElementById('resultCard').hidden = false;
+                document.getElementById('resultLabel').textContent =
+                    `Prognose für die Woche nach ${payload.date}`;
+                document.getElementById('resultPrice').textContent = fmt(prediction);
+                document.getElementById('resultMeta').textContent =
+                    `Ausgangstag ${originDate} · ${modelLabel}`;
+                const current = features.origin_current_price != null
+                    ? features.origin_current_price : features.current_price;
+                const deltaEl = document.getElementById('resultDelta');
+                if (current != null && prediction != null) {
+                    const delta = prediction - current;
+                    deltaEl.textContent = `${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta))} CHF gegenüber ${fmt(current)} CHF am ${originDate}`;
+                    deltaEl.hidden = false;
+                } else {
+                    deltaEl.hidden = true;
+                }
+                renderFeatures(features);
+                // The chart curve is built from the same live inputs the user just
+                // entered, so it must be rebuilt after a manual prediction.
+                loadForecast().catch(() => {});
+                document.getElementById('resultCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+            } catch (err) {
+                error.textContent = 'Prognose konnte nicht abgerufen werden.';
+                error.hidden = false;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Prognose berechnen';
+            }
+        });
+
+        /* ------------------------------------------------------------------ *
+         * Forecast curve: the price chart is extended by default, starting   *
+         * at the newest measured price date (weekly model first, then the    *
+         * forward model out to the configured horizon).                      *
+         * ------------------------------------------------------------------ */
+        function forecastInputs() {
+            const price = parseFloat(document.getElementById('priceInput').value);
+            const demand = parseFloat(document.getElementById('demandInput').value);
+            const params = new URLSearchParams();
+            if (!Number.isNaN(price) && price > 0) params.set('current_price', price);
+            if (!Number.isNaN(demand) && demand > 0) params.set('current_demand', demand);
+            return params;
+        }
+
+        function showForecastError(message) {
+            const box = document.getElementById('forecastError');
+            box.innerHTML = `<span>Prognose-Kurve nicht verfügbar: ${message}</span>`
+                + `<button type="button" class="retry-btn" id="forecastRetry">Erneut versuchen</button>`;
+            box.hidden = false;
+            document.getElementById('forecastNote').innerHTML = '';
+            document.getElementById('forecastRetry').addEventListener('click', () => loadForecast());
+        }
+
+        function updateForecastNote() {
+            const note = document.getElementById('forecastNote');
+            if (!forecastData || !forecastData.points || !forecastData.points.length) {
+                note.innerHTML = '';
+                return;
+            }
+            const weekly = forecastData.points.find((p) => p.model === 'weekly');
+            const last = forecastData.points[forecastData.points.length - 1];
+            const chips = [`<span class="chip">Ausgangstag ${forecastData.origin_date}</span>`];
+            if (weekly) {
+                chips.push(`<span class="chip is-model">Wochenmodell: ${fmt(weekly.value)} CHF in ${weekly.horizon_days} Tagen</span>`);
+            }
+            chips.push(`<span class="chip is-model">Vorhersagemodell: ${fmt(last.value)} CHF in ${last.horizon_days} Tagen</span>`);
+            chips.push(`<span class="chip">Schwankungsband ±${fmt(last.band)} CHF am letzten Horizont</span>`);
+            const failed = Object.keys(forecastData.errors || {}).length;
+            if (failed) {
+                chips.push(`<span class="chip is-warn">${failed} Horizont(e) ohne Prognose</span>`);
+            }
+            note.innerHTML = chips.join('');
+        }
+
+        async function loadForecast() {
+            const params = forecastInputs();
+            const query = params.toString() ? `?${params.toString()}` : '';
+            const res = await fetch(`/api/forecast${query}`);
+            let payload = {};
+            try {
+                payload = await res.json();
+            } catch (err) {
+                payload = {};
+            }
+            if (!res.ok || payload.error) {
+                forecastData = null;
+                renderPriceChart();
+                showForecastError(payload.error || `HTTP ${res.status}`);
+                return;
+            }
+            forecastData = payload;
+            document.getElementById('forecastError').hidden = true;
+            renderPriceChart();
+            updateForecastNote();
+            updateTimeNote();
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Load everything                                                   *
+         * ------------------------------------------------------------------ */
+        async function loadPriceHistory() {
+            const res = await fetch('/api/history');
+            priceData = await res.json();
+            priceMean7 = movingAverage(priceData.price || [], 7);
+            renderPriceChart();
+            prefillForm();
+            updateTimeNote();
+        }
+
+        async function loadRhein() {
+            const res = await fetch('/api/rhein');
+            const payload = res.ok ? await res.json() : {};
+            if (!res.ok) {
+                document.getElementById('rheinSkeleton').hidden = true;
+                document.getElementById('cargoSkeleton').hidden = true;
+                document.getElementById('rheinStats').innerHTML =
+                    `<div class="stat is-warn"><div class="label">Rheinpegel</div><div class="value">–</div><div class="label">${payload.error || 'Quelle nicht erreichbar'}</div></div>`;
+                document.getElementById('cargoNote').textContent = 'Fracht-Daten konnten nicht geladen werden.';
+                updateTimeNote();
+                return;
+            }
+            rheinThresholds = payload.thresholds || rheinThresholds;
+            levelData = payload.levels || null;
+            cargoData = payload.cargo || null;
+            renderRheinStats(payload.snapshot || null);
+            renderRheinChart();
+            renderCargoChart(cargoData);
+            updateTimeNote();
+        }
+
+        startSkeletons();
+        // The forecast curve needs the price history (it defines the origin
+        // date), so it follows the history instead of racing it.
+        loadPriceHistory()
+            .then(() => loadForecast())
+            .catch(() => { document.getElementById('priceSkeleton').hidden = true; });
+        loadRhein().catch(() => {
+            document.getElementById('rheinSkeleton').hidden = true;
+            document.getElementById('cargoSkeleton').hidden = true;
+        });
+    </script>
 </body>
 </html>
