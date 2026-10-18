@@ -167,6 +167,11 @@ def _read_price_history() -> tuple:
 # The curve is assembled here rather than in the browser because it needs one
 # /predict request per horizon step; doing that client-side would fire ~10
 # requests and repeat all of them on every price/demand edit.
+#
+# The response also carries the measured daily prices of the forecast window
+# ("measured", one entry per calendar day). The history line must not stop at
+# the origin date: as soon as a forecasted day is measured, the real price is
+# drawn through the forecast region so prediction and reality are comparable.
 # ---------------------------------------------------------------------------
 FORECAST_MAX_HORIZON = int(os.environ.get("FORECAST_MAX_HORIZON", 60))
 FORECAST_CACHE_TTL = int(os.environ.get("FORECAST_CACHE_TTL", 10 * 60))
@@ -215,6 +220,29 @@ def _last_price_point(series: dict):
         if value is not None:
             return str(dates[i]), float(value)
     return None
+
+
+def _measured_prices(series: dict, start_date: str, end_date: str) -> list:
+    """Real daily prices between two dates - one entry per calendar day.
+
+    A forecast point describes a whole week that lies ahead, but the days of
+    that week that are already measured must appear in the chart too: without
+    them the history line stops exactly where the prediction begins and the two
+    can never be compared in one view. Days the source has no price for are
+    returned with value None, so the chart keeps one label per day and the
+    measured line simply has a hole where nothing was published.
+    """
+    dates = series.get("dates") or []
+    prices = series.get("price") or []
+    known = {str(d): v for d, v in zip(dates, prices) if v is not None}
+    out = []
+    day, last = pd.Timestamp(start_date), pd.Timestamp(end_date)
+    while day <= last:
+        key = day.strftime("%Y-%m-%d")
+        value = known.get(key)
+        out.append({"date": key, "value": round(float(value), 2) if value is not None else None})
+        day += pd.Timedelta(days=1)
+    return out
 
 
 def _weekly_price_sigma(series: dict):
@@ -315,6 +343,11 @@ def _forecast_curve(origin_date: str, origin_price: float, series: dict,
     if not points:
         return {"error": errors.get("weekly") or "no forecast point available", "errors": errors}
 
+    # The curve describes whole weeks ahead. The days of those weeks that are
+    # already measured are sent along with it, so the chart can carry the real
+    # price line through the forecast region instead of ending at the origin.
+    last_forecast_date = max(p["date"] for p in points)
+
     return {
         "origin_date": origin_date,
         "origin_price": origin_price,
@@ -322,6 +355,7 @@ def _forecast_curve(origin_date: str, origin_price: float, series: dict,
         "max_horizon_days": max(p["horizon_days"] for p in points),
         "sigma_weekly": round(sigma, 2) if sigma else None,
         "points": points,
+        "measured": _measured_prices(series, origin_date, last_forecast_date),
         "errors": errors,
     }
 
@@ -514,7 +548,10 @@ def api_forecast():
     Query params: current_price / current_demand (optional, the same values the
     forecast form sends). The curve always starts at the newest price date, so
     the chart can extend the history line into the future without the user
-    having to press the button first.
+    having to press the button first. "measured" holds the real daily prices of
+    every day from that origin date to the last forecast point (null where the
+    source published nothing), which is what lets the measured line run on into
+    the forecast region.
     """
     data, source = _price_cache["data"] if _price_cache["data"] else _read_price_history()
     origin = _last_price_point(data)

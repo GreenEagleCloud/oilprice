@@ -183,6 +183,63 @@ def test_curve_is_cached_per_origin_and_inputs(fake_backend):
     assert len(fake_backend) > first_count
 
 
+# ---------------------------------------------------------------------------
+# Measured daily prices inside the forecast window (actual vs. forecast)
+# ---------------------------------------------------------------------------
+
+def test_measured_prices_give_one_entry_per_calendar_day():
+    """Days without a published price stay in the list as None, so the chart
+    keeps one label per day and the measured line only has a hole there."""
+    series = {
+        "dates": ["2026-10-09", "2026-10-12", "2026-10-13"],
+        "price": [100.0, 105.5, None],
+    }
+    out = frontend._measured_prices(series, "2026-10-09", "2026-10-14")
+    assert [entry["date"] for entry in out] == [
+        "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14",
+    ]
+    assert [entry["value"] for entry in out] == [100.0, None, None, 105.5, None, None]
+
+
+def test_measured_prices_round_to_the_precision_of_the_curve():
+    series = {"dates": ["2026-10-09"], "price": [170.9947]}
+    assert frontend._measured_prices(series, "2026-10-09", "2026-10-09")[0]["value"] == 170.99
+
+
+def test_forecast_carries_the_measured_days_of_its_whole_window(fake_backend):
+    """The history line must not stop at the origin: every day the curve
+    describes is answered with the real price of that day (or None while it is
+    still in the future)."""
+    _, body = get_forecast()
+    measured = body["measured"]
+    last_forecast_date = max(p["date"] for p in body["points"])
+    assert measured[0]["date"] == ORIGIN
+    assert measured[-1]["date"] == last_forecast_date
+    # one entry per calendar day, in order, without gaps
+    days = [entry["date"] for entry in measured]
+    assert days == sorted(days)
+    span = (pd.Timestamp(days[-1]) - pd.Timestamp(days[0])).days + 1
+    assert span == len(days)
+    # the origin day is measured (rounded like the curve), every later day of
+    # the curve is not yet
+    assert measured[0]["value"] == pytest.approx(body["origin_price"], abs=0.01)
+    assert all(entry["value"] is None for entry in measured[1:])
+
+
+def test_measured_days_are_filled_once_the_history_covers_them(fake_backend):
+    """While the curve lies in the future its measured window is empty; the
+    moment the price history has published those days, the same window must
+    come back filled instead of null."""
+    _, body = get_forecast()
+    window = [entry["date"] for entry in body["measured"]]
+    assert all(entry["value"] is None for entry in body["measured"][1:])
+    filled = frontend._measured_prices(
+        {"dates": window, "price": [120.0] * len(window)}, window[0], window[-1]
+    )
+    assert [entry["date"] for entry in filled] == window
+    assert [entry["value"] for entry in filled] == [120.0] * len(window)
+
+
 def test_forecast_without_price_history_is_an_error(monkeypatch):
     monkeypatch.setitem(frontend._price_cache, "data", ({"dates": [], "price": []}, "local"))
     monkeypatch.setitem(frontend._forecast_cache, "data", None)

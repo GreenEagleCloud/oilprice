@@ -397,7 +397,7 @@ Geschichte, die Rhein-Daten und die Prognose.
 |---|---|
 | `GET /` | Seite mit drei Tabs: Preise & Prognose / Rhein Wasserstand / Fracht & Umschlag Rheinhäfen |
 | `GET /api/history` | Preis-/Nachfrage-Historie (S3 zuerst, gebündelte CSV als Fallback) |
-| `GET /api/forecast` | Prognose-Kurve für das Preisdiagramm (Wochen- + Vorhersagemodell, 10-min-Cache) |
+| `GET /api/forecast` | Prognose-Kurve für das Preisdiagramm (Wochen- + Vorhersagemodell, gemessene Tage des Prognosefensters, 10-min-Cache) |
 | `GET /api/rhein` | Pegel-Snapshot, Pegel-Historie (365 Tage), Monats-Fracht (36 Monate) |
 | `POST /predict` | Proxy zum `inference-service` (`/predict`) |
 
@@ -459,6 +459,15 @@ Dargestellt werden:
   Preisschwankung selbst abbildet und nicht die Modellrestfehler. Es ist kein
   Konfidenzintervall der Modelle und wird in der Oberfläche auch nicht so
   genannt.
+* **Gemessene Tagespreise im Prognosefenster** (`measured` in `/api/forecast`) –
+  die Geschichte darf nicht an der letzten Messung enden, wo die Prognose beginnt:
+  der Response enthält für jeden Kalendertag vom Ausgangstag bis zum letzten
+  Prognosepunkt den tatsächlich gemessenen Tagespreis (`null`, wo die Quelle für
+  diesen Tag nichts publiziert hat), und das Diagramm zeichnet ihn als eigene
+  Serie „Tatsächlich gemessen". Die x-Achse bekommt für jeden dieser Tage ein
+  Label, sonst hätte die Linie keinen Platz. Sobald ein prognostizierter Tag
+  veröffentlicht ist, liegt er damit auf der Kurve, und unter dem Diagramm steht
+  je Prognosepunkt die Abweichung „Prognose minus gemessen".
 
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
@@ -503,7 +512,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.5
+ghcr.io/greeneaglecloud/oilprice-frontend:1.6
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

@@ -54,7 +54,7 @@ spec:
         args:
         - --context=dir:///workspace
         - --dockerfile=Dockerfile.frontend
-        - --destination=ghcr.io/greeneaglecloud/oilprice-frontend:1.5
+        - --destination=ghcr.io/greeneaglecloud/oilprice-frontend:1.6
         - --verbosity=info
         resources:
           requests:

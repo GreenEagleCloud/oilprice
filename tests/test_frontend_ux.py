@@ -148,6 +148,29 @@ def test_forecast_curve_is_loaded_without_pressing_the_button(page):
     assert "line[firstIdx - 1] = anchor;" in page
 
 
+def test_measured_prices_run_into_the_forecast_region(page):
+    """The real daily prices must not stop at the forecast origin: the measured
+    days of the forecast window are a dataset of their own, and the x axis has
+    to carry a label for each of them."""
+    body = page[page.index("function extendedDates"): page.index("function renderPriceChart")]
+    assert "forecastData.measured" in body
+    assert "return [upper, lower, line, weekly, measured];" in body
+    chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
+    assert "'Tatsächlich gemessen'" in chart
+    assert "data: forecast[4]" in chart
+    # the update path writes every forecast array, so the new series keeps its
+    # data when the timeframe or the forecast changes
+    assert "forecast.forEach((values, i) => { priceChart.data.datasets[2 + i].data = values; });" in chart
+
+
+def test_forecast_note_shows_prediction_against_measurement(page):
+    """Once a forecasted week is measured, the deviation belongs under the chart."""
+    body = page[page.index("function updateForecastNote"): page.index("async function loadForecast")]
+    assert "measuredForecastPoints()" in body
+    assert "Prognose minus gemessen" in body
+    assert "function measuredForecastPoints()" in page
+
+
 def test_forecast_failure_renders_a_retry_card(page):
     """A failed forecast request must not leave the chart silently unextended."""
     body = page[page.index("function showForecastError"): page.index("function updateForecastNote")]

@@ -290,11 +290,16 @@
                     Messung – markiert durch die senkrechte Linie – geht es
                     gestrichelt weiter: der erste Punkt kommt vom Wochenmodell,
                     die Linie danach vom Vorhersagemodell in 7-Tage-Schritten.
-                    Das flächige Band ist keine Modellunsicherheit, sondern eine
-                    Schätzung aus der beobachteten Preisvolatilität (Standard-
-                    abweichung der 7-Tage-Änderung über drei Jahre, wächst mit
-                    der Wurzel des Horizonts). Fahre mit der Maus über das
-                    Diagramm: im Pegel-Diagramm erscheint dieselbe Datumslinie.
+                    Die dunkle Linie mit Punkten sind die tatsächlich gemessenen
+                    Tagespreise desselben Zeitraums: sie läuft bis heute und
+                    weiter in die Prognose hinein, sobald die Tage veröffentlicht
+                    sind, damit Vorhersage und Realität im gleichen Diagramm
+                    vergleichbar bleiben. Das flächige Band ist keine
+                    Modellunsicherheit, sondern eine Schätzung aus der
+                    beobachteten Preisvolatilität (Standardabweichung der
+                    7-Tage-Änderung über drei Jahre, wächst mit der Wurzel des
+                    Horizonts). Fahre mit der Maus über das Diagramm: im
+                    Pegel-Diagramm erscheint dieselbe Datumslinie.
                 </div>
             </div>
             <div class="chart-wrap">
@@ -662,16 +667,22 @@
 
         // The x axis must reach into the future, otherwise the forecast points
         // have no label to sit on. History days and forecast days are separate
-        // series, so the extra labels are pure axis space.
+        // series, so the extra labels are pure axis space - the measured days of
+        // the forecast window need one too, or the real price line has nowhere
+        // to be drawn.
         function extendedDates(historyDates) {
             if (!forecastData || !forecastData.points || !forecastData.points.length) {
                 return historyDates;
             }
             const known = new Set(historyDates);
-            const extra = forecastData.points
-                .map((p) => p.date)
-                .filter((d) => !known.has(d));
-            return historyDates.concat(extra);
+            const extra = new Set();
+            forecastData.points.forEach((p) => {
+                if (!known.has(p.date)) extra.add(p.date);
+            });
+            (forecastData.measured || []).forEach((m) => {
+                if (!known.has(m.date)) extra.add(m.date);
+            });
+            return historyDates.concat(Array.from(extra).sort());
         }
 
         function forecastSeries(dates) {
@@ -679,8 +690,9 @@
             const lower = dates.map(() => null);
             const line = dates.map(() => null);
             const weekly = dates.map(() => null);
+            const measured = dates.map(() => null);
             if (!forecastData || !forecastData.points || !forecastData.points.length) {
-                return [upper, lower, line, weekly];
+                return [upper, lower, line, weekly, measured];
             }
             const points = forecastData.points;
             const firstIdx = dates.indexOf(points[0].date);
@@ -698,7 +710,27 @@
                 lower[i] = Math.round((p.value - p.band) * 100) / 100;
                 if (p.model === 'weekly') weekly[i] = p.value;
             });
-            return [upper, lower, line, weekly];
+            // Real prices inside the forecast window: the history line keeps
+            // running through the prediction as soon as those days are published.
+            (forecastData.measured || []).forEach((m) => {
+                const i = dates.indexOf(m.date);
+                if (i >= 0 && m.value !== null && m.value !== undefined) measured[i] = m.value;
+            });
+            return [upper, lower, line, weekly, measured];
+        }
+
+        // Forecast points whose week already has a measured price, with the
+        // difference prediction minus measurement. Empty while the whole curve
+        // still lies in the future.
+        function measuredForecastPoints() {
+            if (!forecastData || !forecastData.measured || !forecastData.points) return [];
+            const out = [];
+            forecastData.points.forEach((p) => {
+                const entry = forecastData.measured.find((m) => m.date === p.date);
+                if (!entry || entry.value === null || entry.value === undefined) return;
+                out.push({date: p.date, model: p.model, diff: p.value - entry.value});
+            });
+            return out;
         }
 
         function renderPriceChart() {
@@ -730,6 +762,10 @@
                         {label: 'Band untere Marke', data: forecast[1], borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, fill: false, tension: .2},
                         {label: 'Prognose (Vorhersagemodell)', data: forecast[2], borderColor: '#1298b2', borderWidth: 2, borderDash: [7, 5], tension: .2, pointRadius: 0},
                         {label: 'Prognose (Wochenmodell)', data: forecast[3], borderColor: '#d97706', borderWidth: 2, borderDash: [2, 3], tension: 0, pointRadius: 4},
+                        // The measured prices of the forecast days: the history
+                        // line continues into the prediction instead of stopping
+                        // at the origin, so both can be compared in one view.
+                        {label: 'Tatsächlich gemessen', data: forecast[4], borderColor: '#1f2933', borderWidth: 2, tension: .2, pointRadius: 3},
                     ],
                 },
                 options: {
@@ -1089,6 +1125,14 @@
             }
             chips.push(`<span class="chip is-model">Vorhersagemodell: ${fmt(last.value)} CHF in ${last.horizon_days} Tagen</span>`);
             chips.push(`<span class="chip">Schwankungsband ±${fmt(last.band)} CHF am letzten Horizont</span>`);
+            const measured = measuredForecastPoints();
+            if (measured.length) {
+                // Once a forecasted week is measured, the difference is shown
+                // right next to the curve instead of being looked up by hand.
+                const signed = (v) => `${v > 0 ? '+' : ''}${fmt(v)}`;
+                const details = measured.map((m) => `${m.date}: ${signed(m.diff)} CHF`).join(' · ');
+                chips.push(`<span class="chip is-warn">Prognose minus gemessen (${details})</span>`);
+            }
             const failed = Object.keys(forecastData.errors || {}).length;
             if (failed) {
                 chips.push(`<span class="chip is-warn">${failed} Horizont(e) ohne Prognose</span>`);
