@@ -81,8 +81,13 @@ FRED_BRENT_SERIES = "DCOILBRENTEU"
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
 # ECB euro reference rates: EUR per USD and EUR per CHF -> USD/CHF = CHF/USD.
-# eurofxref-hist.csv is the daily history since 1999; eurofxref-daily.xml is
-# the latest published day (the history file sometimes lags a day).
+# eurofxref-hist.zip is the daily history since 1999; eurofxref-daily.xml is the
+# latest published day (the history file sometimes lags a day). The zip is tried
+# first: the unpacked eurofxref-hist.csv is served truncated by some CDNs
+# (verified 2026-10-18: the .csv had 2801 rows ending 2010-02-14 while the .zip
+# of the very same file had 7116 rows up to 2026-10-16), and a truncated FX
+# history silently cuts the market drivers off at 2010.
+ECB_HIST_ZIP_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip"
 ECB_HIST_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.csv"
 ECB_DAILY_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 

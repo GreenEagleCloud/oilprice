@@ -29,6 +29,7 @@ import os
 import re
 import sys
 import time
+import zipfile
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -42,6 +43,7 @@ from market_config import (  # noqa: E402
     DEFAULT_PERIOD,
     ECB_DAILY_URL,
     ECB_HIST_URL,
+    ECB_HIST_ZIP_URL,
     FRED_BRENT_SERIES,
     FRED_CSV_URL,
     FX_SYMBOL,
@@ -224,24 +226,55 @@ def _parse_ecb_daily(text) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["date", "usd_chf"])
 
 
-def fetch_ecb_usd_chf() -> pd.DataFrame:
-    """USD/CHF from the ECB euro reference rates (daily history since 1999)."""
-    frames = []
+def _usd_chf_from_hist(raw) -> pd.DataFrame:
+    """Parse the ECB eurofxref history CSV (bytes or text) into (date, usd_chf)."""
+    text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
+    table = pd.read_csv(io.StringIO(text))
+    usd = pd.to_numeric(table["USD"], errors="coerce")
+    chf = pd.to_numeric(table["CHF"], errors="coerce")
+    return pd.DataFrame({"date": pd.to_datetime(table["Date"]).dt.normalize(),
+                         "usd_chf": chf / usd})
+
+
+def _fetch_ecb_hist() -> pd.DataFrame:
+    """ECB euro reference rate history, preferring the zip archive.
+
+    The plain eurofxref-hist.csv is delivered truncated by some CDNs, which cuts
+    the FX leg (and with it every market driver) off in 2010 while still looking
+    like a successful download. eurofxref-hist.zip holds the same CSV complete,
+    so it is the primary source and the .csv is only the fallback.
+    """
+    try:
+        resp = requests.get(ECB_HIST_ZIP_URL, headers=HEADERS, timeout=90)
+        if resp.status_code == 200:
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as archive:
+                name = next(n for n in archive.namelist() if n.endswith(".csv"))
+                frame = _usd_chf_from_hist(archive.read(name))
+            if not frame.empty:
+                print(f"  ECB USD/CHF history (zip): {len(frame)} rows "
+                      f"{frame['date'].min().date()} .. {frame['date'].max().date()}")
+                return frame
+        print(f"  ECB history zip -> HTTP {resp.status_code}")
+    except (requests.RequestException, zipfile.BadZipFile, KeyError) as exc:
+        print(f"  ECB history zip unavailable: {exc}")
 
     try:
         resp = requests.get(ECB_HIST_URL, headers=HEADERS, timeout=90)
         if resp.status_code == 200:
-            raw = pd.read_csv(io.StringIO(resp.text))
-            usd = pd.to_numeric(raw["USD"], errors="coerce")
-            chf = pd.to_numeric(raw["CHF"], errors="coerce")
-            frames.append(
-                pd.DataFrame({"date": pd.to_datetime(raw["Date"]).dt.normalize(),
-                              "usd_chf": chf / usd})
-            )
-        else:
-            print(f"  ECB history -> HTTP {resp.status_code}")
+            frame = _usd_chf_from_hist(resp.content)
+            print(f"  ECB USD/CHF history (csv): {len(frame)} rows "
+                  f"{frame['date'].min().date()} .. {frame['date'].max().date()}")
+            return frame
+        print(f"  ECB history -> HTTP {resp.status_code}")
     except requests.RequestException as exc:
         print(f"  ECB history unavailable: {exc}")
+
+    return pd.DataFrame(columns=["date", "usd_chf"])
+
+
+def fetch_ecb_usd_chf() -> pd.DataFrame:
+    """USD/CHF from the ECB euro reference rates (daily history since 1999)."""
+    frames = [_fetch_ecb_hist()]
 
     # The history file sometimes lags one day behind the daily publication.
     try:

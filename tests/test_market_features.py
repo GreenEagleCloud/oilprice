@@ -1,7 +1,9 @@
 """Fixture tests for the oil-market feature pipeline (no network)."""
 
+import io
 import pathlib
 import sys
+import zipfile
 
 import pandas as pd
 import pytest
@@ -143,3 +145,58 @@ def test_merge_raw_upserts_by_date():
     assert merged["date"].tolist() == sorted(merged["date"].tolist())
     last = merged[merged["date"] == fresh["date"].iloc[-1]].iloc[0]
     assert last["gasoil_usd_tonne"] == 999.0
+
+
+
+class _Response:
+    """Minimal stand-in for a successful requests.Response."""
+
+    def __init__(self, content: bytes):
+        self.content = content
+        self.status_code = 200
+
+
+def _hist_zip(csv: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("eurofxref-hist.csv", csv)
+    return buffer.getvalue()
+
+
+FULL_CSV = b"Date,USD,CHF\n2026-10-15,1.1253,0.9272\n2026-10-16,1.1250,0.9270\n"
+TRUNCATED_CSV = b"Date,USD,CHF\n2010-02-13,1.3600,1.4600\n2010-02-14,1.3610,1.4610\n"
+
+
+def test_ecb_history_prefers_the_complete_zip_archive(monkeypatch):
+    """The plain eurofxref-hist.csv is served truncated - the zip must win."""
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(url)
+        if url.endswith(".zip"):
+            return _Response(_hist_zip(FULL_CSV))
+        return _Response(TRUNCATED_CSV)
+
+    monkeypatch.setattr(market.requests, "get", fake_get)
+    frame = market._fetch_ecb_hist()
+
+    assert calls[0].endswith("eurofxref-hist.zip")
+    # 2026 rows, not the truncated 2010 window
+    assert frame["date"].max() == pd.Timestamp("2026-10-16")
+    assert len(frame) == 2
+    assert frame["usd_chf"].iloc[-1] == pytest.approx(0.9270 / 1.1250)
+
+
+def test_ecb_history_falls_back_to_the_plain_csv(monkeypatch):
+    """A missing zip must not lose the FX history."""
+
+    def fake_get(url, headers=None, timeout=None):
+        if url.endswith(".zip"):
+            raise market.requests.RequestException("zip unavailable")
+        return _Response(TRUNCATED_CSV)
+
+    monkeypatch.setattr(market.requests, "get", fake_get)
+    frame = market._fetch_ecb_hist()
+
+    assert len(frame) == 2
+    assert frame["date"].max() == pd.Timestamp("2010-02-14")
