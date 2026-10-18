@@ -245,6 +245,15 @@ def upsert_feature_group(df: pd.DataFrame, name: str, version: int, primary_key:
     df = df.copy()
     df[event_time] = pd.to_datetime(df[event_time])
 
+    # hsfs marks the newest row of every primary key for the online store with
+    # groupby(primary_key)[event_time].idxmax(); rows without an event time make
+    # that lookup fail ("KeyError: [nan] not in index"), so they are skipped.
+    # For rhein_cargo these are calendar months with no published bulletin.
+    missing = int(df[event_time].isna().sum())
+    if missing:
+        df = df.dropna(subset=[event_time]).reset_index(drop=True)
+        print(f"{name}: skipped {missing} rows without an event time")
+
     fg = fs.get_or_create_feature_group(
         name=name,
         version=version,

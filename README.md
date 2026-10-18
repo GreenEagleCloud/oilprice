@@ -302,7 +302,7 @@ Aktuelle Images:
 ```text
 ghcr.io/greeneaglecloud/oilprice-frontend:1.4
 ghcr.io/greeneaglecloud/oilprice-inference:1.4
-ghcr.io/greeneaglecloud/oilprice-pipelines:1.5
+ghcr.io/greeneaglecloud/oilprice-pipelines:1.6
 ```
 
 Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
