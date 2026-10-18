@@ -13,7 +13,7 @@ spec:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: feature-pipeline
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.7
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.8
             imagePullPolicy: Always
             # Order matters: the Rhine and market pipelines write the driver
             # feature groups AND their local feature CSVs, and the weekly /
@@ -29,6 +29,9 @@ spec:
               seccompProfile:
                 type: RuntimeDefault
             env:
+            # unbuffered stdout so `kubectl logs` shows progress immediately
+            - name: PYTHONUNBUFFERED
+              value: "1"
             # Hopsworks (Feature Store upsert)
             - name: HOPSWORKS_HOST
               valueFrom:

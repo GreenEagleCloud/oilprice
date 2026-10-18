@@ -94,6 +94,45 @@ def test_parse_ecb_daily_cross_rate():
     assert frame["usd_chf"].iloc[0] == pytest.approx(0.9272 / 1.1253)
 
 
+def _raw_with_hole():
+    """10 trading days in Jan 2026, then a 9-month hole, then 4 days in Oct 2026."""
+    early = _raw()
+    late_dates = pd.bdate_range("2026-10-12", periods=4)
+    late = pd.DataFrame(
+        {
+            "date": [d.date().isoformat() for d in late_dates],
+            "gasoil_usd_tonne": [900.0] * 4,
+            "usd_chf": [0.82] * 4,
+            "gasoil_chf_tonne": [900.0 * 0.82] * 4,
+            "market_price_chf_100l": [900.0 * 0.82 / HEIZOEL_100L_UNITS_PER_TONNE] * 4,
+            "gasoil_source": ["brent_proxy:fred:DCOILBRENTEU"] * 4,
+            "fx_source": ["ecb:eurofxref-daily"] * 4,
+        }
+    )
+    return pd.concat([early, late], ignore_index=True)
+
+
+def test_gap_guard_drops_windows_that_span_a_hole():
+    """A hole in the source series must not leak a bogus 7-day change."""
+    frame = pipeline.build_market_features(_raw_with_hole())
+    chg = frame["market_price_chf_100l_chg_7d_pct"]
+    mean7 = frame["market_price_chf_100l_mean_7d"]
+
+    # contiguous part: the last January row still has a valid 7-day change
+    assert chg.iloc[9] == pytest.approx((820.0 - 800.0) / 800.0 * 100, abs=1e-3)
+    levels = frame["market_price_chf_100l"]
+    assert mean7.iloc[9] == pytest.approx(levels.iloc[3:10].mean(), abs=1e-4)
+
+    # after the hole: no window may reach back across 9 months
+    assert chg.iloc[-4:].isna().all()
+    assert mean7.iloc[-4:].isna().all()
+
+    # the raw level itself is still usable
+    assert frame["market_price_chf_100l"].iloc[-1] == pytest.approx(
+        900.0 * 0.82 / HEIZOEL_100L_UNITS_PER_TONNE, abs=1e-4
+    )
+
+
 def test_merge_raw_upserts_by_date():
     existing = _raw().iloc[:8]
     fresh = _raw().iloc[6:]

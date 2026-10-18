@@ -177,6 +177,23 @@ als *leere* Antwort). Der Collector probiert dreimal mit Backoff und fällt dann
 auf ECB/FRED zurück; `merge_raw()` upsertet per Datum, die Historie wächst also
 über die täglichen Läufe trotzdem vollständig.
 
+**Fenster-Sanity (Loch im Rohdatensatz):** Die 7-Tage-Fenster zählen *Beobachtungen*,
+nicht Kalendertage – das ist nur dann eine Woche, wenn die Quellserie lückenlos ist.
+Ist sie es nicht (in dieser Umgebung endet die ECB-Historie nach 2010-02-14, der
+aktuelle Tag kommt aus `eurofxref-daily.xml`), blickt ein "7-Tage"-Fenster über
+16 Jahre und erzeugt Werte wie **+38.8 % Wochenänderung**, die dann bis in die
+Online-Inferenz durchschlagen. `build_market_features()` verwirft solche Fenster
+(NULL statt Fantasiewert): `MAX_WINDOW_SPAN_DAYS = 14` für den 7-Beobachtungs-
+Mittelwert, `MAX_LAG_DAYS = 21` für die 7-Beobachtungs-Änderung (sieben Handelstage
+spannen 9–13 Kalendertage, mit Feiertagen etwas mehr). Im Log sichtbar:
+
+```text
+gap guard: dropped 18 7-day change values whose 7-observation lag exceeded 21 calendar days
+```
+
+Echte historische Ausschläge bleiben erhalten (Dez 2008 / Jan 2009: ±30–49 %,
+Sept 2001: −30 %) – die Schwelle trifft nur echte Datenlöcher.
+
 
 ## Training mit Rhein- und Markt-Treibern
 
@@ -448,7 +465,7 @@ Aktuelle Images:
 ```text
 ghcr.io/greeneaglecloud/oilprice-frontend:1.4
 ghcr.io/greeneaglecloud/oilprice-inference:1.5
-ghcr.io/greeneaglecloud/oilprice-pipelines:1.7
+ghcr.io/greeneaglecloud/oilprice-pipelines:1.8
 ```
 
 Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
@@ -478,6 +495,19 @@ kubectl apply -f k8s/frontend-service.yaml \
 kubectl -n oilprice rollout status deployment/frontend
 kubectl -n oilprice rollout status deployment/inference
 ```
+
+Alle Sammler-/Pipeline-Jobs sind gegen Aufhängen geschützt:
+
+- `activeDeadlineSeconds: 1800` auf `collect-daily-prices`, `collect-rhein`,
+  `feature-pipeline` und `training-pipeline` – ein hängender Upstream-Request
+  beendet den Job nach 30 Minuten statt ihn bis zum nächsten Cron-Lauf laufen zu
+  lassen.
+- `collect-rhein` führt die drei Quellen (Pegel, Fracht, Kaub-Archiv) unabhängig
+  aus (`|| rc=1` statt `&&`): ein LINDAS-502 verhindert nicht mehr das Kaub-
+  Archiv, das nur ~30 Tage Historie bei WSV hat – ein verpasster Tag ist verloren.
+  Der Job gilt erst als Fehler, wenn mindestens ein Schritt fehlgeschlagen ist.
+- `PYTHONUNBUFFERED=1` in allen vier CronJobs, damit `kubectl logs` den Fortschritt
+  sofort zeigt (Python puffert stdout sonst, wenn kein TTY verbunden ist).
 
 Feature-Pipeline sofort auslösen, damit die Forward-Feature-Rows mit dem
 aktuellen `origin_date` aus dem S3-Rohdatensatz aktualisiert werden:
@@ -518,6 +548,42 @@ kubectl -n oilprice logs job/training-manual-<NAME> --tail=40 | grep -E 'driver 
 # MSE: ...
 # Registered 'oil_price_model' (version N) in the Hopsworks Model Registry
 ```
+
+**Verifizierter Cluster-Lauf (2026-10-18, `pipelines:1.7` → `1.8`):**
+
+```text
+# collect-daily-prices: Yahoo liefert im Cluster 0 Zeilen (USDCHF=X und BZ=F),
+# der ECB/FRED-Fallback greift wie vorgesehen
+market data: 2841 rows 1998-12-24 .. 2026-10-16 | gasoil source=brent_proxy:fred:DCOILBRENTEU fx source=ecb:eurofxref
+
+# collect-rhein: LINDAS zwischendurch HTTP 502, WSV/BBS ok; die drei Schritte
+# sind unabhängig, ein Ausfall stoppt das Kaub-Archiv nicht mehr
+kaub archive: 2878 raw readings 2026-09-18 .. 2026-10-18 | kaub daily rows: 33
+
+# feature-pipeline
+Feature group 'rhein_level' v1: 2310 rows upserted
+Feature group 'rhein_cargo' v1: 143 rows upserted
+Feature group 'oil_market' v1: 2841 rows upserted
+driver features joined: 11 columns | coverage: basel_level_cm=2310, ... market_price_chf_100l=1791
+Feature group 'heizoel24' v2: 8659 rows upserted
+Feature view 'heizoel24_weekly' v2 ready (23 features)
+Feature group 'heizoel24_forward' v2: 370878 rows upserted
+
+# training-pipeline
+X_train: (6921, 23) | X_test: (1731, 23) | MSE: 2.7931
+Registered 'oil_price_model' (version 14)
+Registered 'oil_price_forward_model' (version 10) | MSE: 4.8118
+```
+
+Inferenz gegen das neue Modell (`POST /predict`, 2026-10-16) liefert alle 23
+Spalten inklusive `basel_level_cm=472.0`, `rhein_low_water_flag`,
+`market_price_chf_100l=65.59`, `usd_chf=0.824` und `model=weekly`.
+
+Die Markt-Abdeckung liegt bei 1791 von 8659 Preis-Tagen: der Rohdatensatz startet
+mit `OILPRICE_MARKET_PERIOD=10y`, und die ECB-Historie endet in dieser Umgebung
+nach 2010-02-14 (`eurofxref-hist.csv` enthält hier nur 1999-01-05 … 2010-02-14).
+Für eine lückenlose Markt-Historie `python src/collect_oil_market_prices.py
+--period max` laufen lassen und den ECB-Feed auf echten Stand prüfen.
 
 Einmaliger Rhein-Bootstrap (volle Pegel-Historie seit 2020 und alle
 Fracht-Bulletins; schreibt `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`,

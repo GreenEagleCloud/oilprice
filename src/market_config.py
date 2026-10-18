@@ -135,3 +135,10 @@ MARKET_FEATURES = [
 # Source flags are stored in the feature group for auditability but are not
 # model features (they are constant while a fallback source is in use).
 MARKET_SOURCE_COLUMNS = ["gasoil_source", "fx_source"]
+
+# Rolling-window sanity: a "7-day" window is 7 *observations*, which is only a
+# week when the source has no hole. Seven trading days span 9-13 calendar days
+# (longer around holidays); a wider span means the series is missing data, so
+# the smoothed / changed value is dropped instead of computed across the hole.
+MAX_WINDOW_SPAN_DAYS = 14
+MAX_LAG_DAYS = 21

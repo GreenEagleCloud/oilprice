@@ -31,15 +31,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from market_config import (  # noqa: E402
     FEATURES_LOCAL_CSV,
+    LOCAL_MARKET_CSV,
     MARKET_FEATURES,
     MARKET_FEATURE_GROUP,
     MARKET_FEATURE_GROUP_VERSION,
     MARKET_FEATURE_VIEW,
     MARKET_FEATURE_VIEW_VERSION,
     MARKET_RAW_COLUMNS,
-    MARKET_SOURCE_COLUMNS,
-    LOCAL_MARKET_CSV,
     MARKET_RAW_KEY,
+    MARKET_SOURCE_COLUMNS,
+    MAX_LAG_DAYS,
+    MAX_WINDOW_SPAN_DAYS,
 )
 
 
@@ -65,18 +67,41 @@ def build_market_features(raw: pd.DataFrame) -> pd.DataFrame:
     that the model gets a 7-day mean and the 7-day change in percent: the level
     carries the cost level, the change carries the momentum of the purchase
     price, which is what moves the Swiss retail price within a week.
+
+    The rolling windows are 7 *observations* (= one trading week), so they are
+    only meaningful when those observations are actually one week apart. If the
+    source has a hole - a discontinued series, a failed download - the 7th
+    observation back can be months or years away, and the resulting "7-day
+    change" is noise (a 16-year gap once produced +38.8 % here). Such rows get
+    NULL instead of a bogus value, which the model then treats as missing.
     """
     df = raw.copy()
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").drop_duplicates(subset="date", keep="last").set_index("date")
 
-    # Trading days only: no weekend rows exist in the source series, so the
-    # rolling windows are 7 *observations* (= one trading week).
     price = df["market_price_chf_100l"].astype("float64")
-    df["market_price_chf_100l_mean_7d"] = price.rolling(7, min_periods=2).mean().round(4)
-    df["market_price_chf_100l_chg_7d_pct"] = (
-        (price - price.shift(7)) / price.shift(7).replace(0.0, np.nan) * 100
-    ).round(3)
+    dates = df.index.to_series()
+
+    # Calendar distance of the 7-observation window and of the 7-observation lag.
+    window_span_days = (dates - dates.shift(6)).dt.days
+    lag_span_days = (dates - dates.shift(7)).dt.days
+    # NaN span only happens at the very start of the series, where the short
+    # windows (min_periods) are still valid.
+    window_ok = window_span_days.isna() | (window_span_days <= MAX_WINDOW_SPAN_DAYS)
+    lag_ok = lag_span_days.isna() | (lag_span_days <= MAX_LAG_DAYS)
+
+    mean_7d = price.rolling(7, min_periods=2).mean().where(window_ok)
+    df["market_price_chf_100l_mean_7d"] = mean_7d.round(4)
+
+    prev_price = price.shift(7).where(lag_ok).replace(0.0, np.nan)
+    chg_7d = (price - prev_price) / prev_price * 100
+    dropped = int((price.shift(7).notna() & ~lag_ok).sum())
+    if dropped:
+        print(
+            f"  gap guard: dropped {dropped} 7-day change values whose 7-observation "
+            f"lag exceeded {MAX_LAG_DAYS} calendar days (hole in the source series)"
+        )
+    df["market_price_chf_100l_chg_7d_pct"] = chg_7d.round(3)
 
     out = df[MARKET_FEATURES + MARKET_SOURCE_COLUMNS].copy()
     out = out.dropna(subset=["gasoil_usd_tonne", "usd_chf", "market_price_chf_100l"])

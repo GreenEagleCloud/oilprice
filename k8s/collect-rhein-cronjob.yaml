@@ -9,18 +9,30 @@ spec:
   schedule: "35 23 * * *"
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 1800
       template:
         spec:
           imagePullSecrets:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: collect-rhein
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.7
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.8
             imagePullPolicy: Always
             # 1) Basel (data.bs.ch) + Kaub (WSV) gauge series and the realtime
             #    snapshot  2) Port-of-Switzerland monthly cargo bulletins (PDF)
             #    3) Kaub raw archive (WSV only serves ~30 days -> accumulate it)
-            command: ["sh", "-c", "python src/collect_rhein_levels.py && python src/collect_rhein_cargo.py && python src/collect_rhein_kaub_history.py"]
+            # The three sources are independent: if LINDAS/WSV is down, the
+            # remaining steps still run (a missed Kaub day is lost history), and
+            # the job only fails if at least one step failed.
+            command:
+            - sh
+            - -c
+            - |
+              rc=0
+              python src/collect_rhein_levels.py || rc=1
+              python src/collect_rhein_cargo.py || rc=1
+              python src/collect_rhein_kaub_history.py || rc=1
+              exit $rc
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
@@ -31,6 +43,9 @@ spec:
               seccompProfile:
                 type: RuntimeDefault
             env:
+            # unbuffered stdout so `kubectl logs` shows progress immediately
+            - name: PYTHONUNBUFFERED
+              value: "1"
             # S3 (rook-ceph object storage): raw/rhein_levels.csv,
             # raw/rhein_cargo.csv and raw/rhein_snapshot.json
             - name: AWS_ACCESS_KEY_ID
