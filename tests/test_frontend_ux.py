@@ -156,6 +156,9 @@ def test_forecast_continues_the_seven_day_mean(page):
     assert "line[weekEndIdx] = weeklyPoint.value;" in body
     # the cone covers the first week as well, not only the forward model
     assert "upper[i] = Math.round((weeklyPoint.value + weeklyPoint.band) * 100) / 100;" in body
+    # and it begins on the last measured day with a width of nothing, so the blue
+    # area leads back to the last measurement instead of starting a week ahead
+    assert "upper[originIdx] = lower[originIdx] = Math.round(meanAtOrigin * 100) / 100;" in body
     # the models answer one value per week; the line through those values must
     # still be one line instead of a row of islands
     chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
@@ -397,11 +400,16 @@ def test_forecast_form_only_asks_for_the_date(page):
 
 def test_forecast_date_is_written_as_dd_mm_yyyy(page):
     """The page speaks dd.mm.yyyy. A native date field prints the locale of the
-    browser instead - 10/19/2026 in en-US - which is not this page's format."""
+    browser instead - 10/19/2026 in en-US - which is not this page's format. The
+    calendar itself stays available: it belongs to a transparent date field that
+    sits behind the calendar button of the text field."""
     form = page[page.index('id="forecastForm"'): page.index("</form>")]
-    assert 'type="date"' not in form
+    assert '<input type="text" id="dateInput"' in form
     assert 'inputmode="numeric"' in form
     assert "TT.MM.JJJJ" in form
+    # the calendar is not gone: a date field carries it, a button opens it
+    assert 'id="datePicker" class="date-picker"' in form
+    assert 'id="datePickerBtn"' in form
     # the field text is turned back into the ISO date the API expects, and a
     # date that does not exist (31.02.) is refused instead of rolled over
     parse = page[page.index("function parseGermanDate"): page.index("function defaultForecastDate")]
@@ -425,6 +433,42 @@ def test_forecast_date_defaults_to_the_first_day_without_measurement(page):
     assert "dateInput.value = formatDate(standard);" in body
     assert "const today = todayISO();" in body
     assert "const origin = latestMeasuredDate();" in body
+
+
+def test_calendar_button_opens_the_browser_picker(page):
+    """The text field keeps the German format, the calendar of the browser comes
+    from the date field behind the button. The button hands the field content to
+    it before opening it, the picker hands its ISO date back as dd.mm.yyyy."""
+    body = page[page.index("function wireDatePicker"): page.index("wireDatePicker();")]
+    assert "picker.min = dateInput.min;" in body
+    assert "picker.max = dateInput.max;" in body
+    assert "picker.value = iso || defaultForecastDate();" in body
+    assert "picker.showPicker()" in body
+    assert "dateInput.value = formatDate(picker.value);" in body
+    # the picker is wired before the page starts loading
+    assert page.index("wireDatePicker();") < page.index("startSkeletons();")
+
+
+def test_forecast_is_computed_on_the_first_load(page):
+    """Opening the page must not leave an empty forecast: the prediction of the
+    standard date runs by itself, without scrolling and without a second curve
+    request, and the card carries a loader while it is on its way."""
+    chain = page[page.index("startSkeletons();"):]
+    assert ".then(() => loadForecast())" in chain
+    assert ".then(() => loadDefaultPrediction())" in chain
+    default = page[page.index("async function loadDefaultPrediction"): page.index("function wireDatePicker")]
+    assert "runPrediction(document.getElementById('dateInput').value" in default
+    assert "{refreshCurve: false}" in default
+    run = page[page.index("async function runPrediction"): page.index("async function loadDefaultPrediction")]
+    # only a prediction the user asked for moves the page
+    assert "if (options.scroll) card.scrollIntoView" in run
+    assert "card.hidden = false" in run
+    assert "if (options.refreshCurve !== false) loadForecast()" in run
+    assert "skeleton.hidden = false" in run and "skeleton.hidden = true" in run
+    # the loader belongs to the markup and starts with the other skeletons
+    assert '<div class="result-skeleton skeleton-line w40" id="resultSkeleton"></div>' in page
+    skeletons = page[page.index("function startSkeletons"): page.index("function startSkeletons") + 400]
+    assert "'resultSkeleton'" in skeletons
 
 
 def test_hover_marks_the_day_without_a_box_in_the_chart(page):

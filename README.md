@@ -495,8 +495,12 @@ Dargestellt werden:
   benannte Schätzung: Standardabweichung der 7-Tage-Preisänderung über die
   letzten drei Jahre (`FORECAST_VOLATILITY_DAYS`), skaliert mit
   `sqrt(Horizont / 7)` (Multiplikator `FORECAST_BAND_SIGMA`) und in Marken-Blau
-  `rgba(6, 106, 171, .16)` gefüllt – er beginnt bei der ersten Prognosewoche und
-  wächst bis zum letzten Horizont. Auf der echten Serie ergibt das rund ±5 CHF
+  `rgba(6, 106, 171, .16)` gefüllt – er beginnt **am letzten Messpunkt** mit
+  einer Breite von null (beide Kanten sitzen auf dem 7-Tage-Mittel des
+  Ausgangstags, `upper[originIdx] = lower[originIdx]`) und wächst von dort bis
+  zum letzten Horizont. Ein Kegel, der erst eine Woche nach der letzten Messung
+  anfängt, wirkt wie ein zweites Diagramm; so führt er sichtbar auf den letzten
+  Messpunkt zurück. Auf der echten Serie ergibt das rund ±5 CHF
   nach 7 Tagen und ±18 CHF nach 84 Tagen – etwas weiter als der Fehler einer
   naiven Fortschreibung, weil das Band die Preisschwankung selbst abbildet und
   nicht die Modellrestfehler. Es ist kein Konfidenzintervall der Modelle und
@@ -517,14 +521,28 @@ Dargestellt werden:
   Eingabedatum auf: `current_price`/`current_demand` sind keine Felder mehr,
   beide Werte kommen aus dem Online-Feature-Store (die API nimmt sie weiterhin
   an, falls ein Client sie mitgeben will). Das Datum steht im Feld **TT.MM.JJJJ**
-  – ein Textfeld und kein natives Datumsfeld, weil dieses das Datum in der
-  Locale des Browsers anzeigt (en-US: `10/19/2026`); `parseGermanDate()` wandelt
-  die Eingabe in das ISO-Datum der API und verwirft unmögliche Daten wie
-  `31.02.`. Voreingestellt ist nicht die letzte Messung, sondern der **erste Tag
+  – ein Textfeld und kein sichtbares natives Datumsfeld, weil dieses das Datum in
+  der Locale des Browsers anzeigt (en-US: `10/19/2026`); `parseGermanDate()`
+  wandelt die Eingabe in das ISO-Datum der API und verwirft unmögliche Daten wie
+  `31.02.`. Der Kalender ist trotzdem da: hinter dem Kalender-Button des
+  Textfelds liegt ein durchsichtiges `input type="date"` (`#datePicker`), das der
+  Button mit `showPicker()` öffnet; sein ISO-Wert wird zurück ins Feld
+  geschrieben (`formatDate()`), und `min`/`max` des Feldes werden vorher an es
+  weitergegeben.
+  Voreingestellt ist nicht die letzte Messung, sondern der **erste Tag
   ohne Messwert** – in der Regel morgen (`defaultForecastDate()`: letzte Messung
   + 1 Tag, nie vor heute; bewusst kein `toISOString()`). Obergrenze ist der
   letzte vom Vorhersagemodell bedienbare Tag (letzte Messung + 90 Tage,
   mindestens heute + 90).
+* **Prognose beim ersten Öffnen** – die Seite wartet nicht auf „Prognose
+  berechnen": nach der Preisgeschichte und der Prognosekurve läuft
+  `loadDefaultPrediction()` dieselbe Rechnung für das voreingestellte Datum, und
+  Ergebnis-Karte plus Merkmals-Tabelle sind gefüllt, bevor die Seite angefasst
+  wird (`runPrediction()` ist der gemeinsame Code von Knopf und
+  Erstaufruf). Auf dem ersten Lauf wird die Kurve nicht ein zweites Mal
+  geholt (`{refreshCurve: false}`), und es wird nicht scrolliert
+  (`{scroll: true}` nur beim Knopfdruck); die Karte zeigt währenddessen
+  `#resultSkeleton`.
 
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
@@ -569,7 +587,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.11
+ghcr.io/greeneaglecloud/oilprice-frontend:1.12
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

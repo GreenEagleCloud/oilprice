@@ -208,6 +208,28 @@
             top: 5px; font-size: .72rem; color: var(--accent); font-weight: 600;
         }
         .field-hint { margin: 5px 0 0; font-size: .76rem; color: var(--muted); }
+        /* Calendar button: the text field keeps the German format, the browser
+           calendar comes from the transparent date field behind this button. */
+        .date-btn {
+            position: absolute; right: 6px; top: 50%; transform: translateY(-58%);
+            display: grid; place-items: center; width: 38px; height: 38px;
+            border: 0; border-radius: 8px; background: transparent;
+            color: var(--muted); cursor: pointer;
+        }
+        .date-btn:hover { background: #eceff3; color: var(--accent); }
+        .date-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .date-btn svg { width: 20px; height: 20px; }
+        .date-picker {
+            position: absolute; right: 6px; top: 50%; transform: translateY(-58%);
+            width: 38px; height: 38px; margin: 0; padding: 0; border: 0;
+            background: transparent; color: transparent; opacity: .01; cursor: pointer;
+        }
+        .date-picker::-webkit-calendar-picker-indicator {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            margin: 0; padding: 0; opacity: 1; cursor: pointer;
+        }
+        .result-skeleton { display: flex; flex-direction: column; gap: 8px; }
+        .result-skeleton[hidden] { display: none; }
         .primary-btn {
             font: inherit; font-size: 1rem; font-weight: 700; width: 100%;
             padding: 14px 18px; margin-top: 6px; cursor: pointer;
@@ -360,8 +382,9 @@
                     vergleichbar bleiben. Der blaue Kegel ist keine
                     Modellunsicherheit, sondern eine Schätzung aus der
                     beobachteten Preisvolatilität (Standardabweichung der
-                    7-Tage-Änderung über drei Jahre, wächst mit der Wurzel des
-                    Horizonts) und reicht über drei Monate. Fahre mit der Maus
+                    7-Tage-Änderung über drei Jahre): der Kegel beginnt am
+                    letzten Messpunkt mit einer Breite von null, wächst mit der
+                    Wurzel des Horizonts und reicht über drei Monate. Fahre mit der Maus
                     über das Diagramm: eine graue Linie springt auf den nächsten
                     Tag, und ein Punkt markiert ihn auf jeder Linie – Datum,
                     Preis, 7-Tage-Mittel, Nachfrageindex und Vorhersage stehen
@@ -395,6 +418,9 @@
         <section class="two-col" id="prognose">
             <div class="col-main">
                 <div class="card result-card" id="resultCard" hidden>
+                    <!-- The page computes the default forecast on its own, so the
+                         card is never left empty while that request is on its way. -->
+                    <div class="result-skeleton skeleton-line w40" id="resultSkeleton"></div>
                     <div class="result-label" id="resultLabel">Prognose</div>
                     <div class="result-price">
                         <span id="resultPrice">–</span>
@@ -407,14 +433,27 @@
                 <form class="card forecast-form" id="forecastForm">
                     <h2>Prognose erstellen</h2>
                     <div class="field">
-                        <!-- Not a native date field: the native picker prints
-                             the date in the locale of the browser - en-US
-                             prints 10/19/2026 there. This page always writes
-                             dd.mm.yyyy. -->
+                        <!-- The field itself stays a text field: a native date
+                             field prints the date in the locale of the browser -
+                             en-US shows 10/19/2026 there - and this page always
+                             writes dd.mm.yyyy. The calendar is not lost: the
+                             button opens the browser calendar of the transparent
+                             date field behind it, and that field answers with an
+                             ISO date that is written back as dd.mm.yyyy. -->
                         <input type="text" id="dateInput" inputmode="numeric"
                                autocomplete="off" spellcheck="false"
                                placeholder=" " maxlength="10" required>
                         <label for="dateInput">Eingabedatum (TT.MM.JJJJ)</label>
+                        <input type="date" id="datePicker" class="date-picker" tabindex="-1"
+                               aria-hidden="true" aria-label="Datum im Kalender wählen">
+                        <button type="button" class="date-btn" id="datePickerBtn"
+                                aria-label="Datum im Kalender wählen" title="Datum im Kalender wählen">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M7 3v3M17 3v3M3 9h18M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
+                                      fill="none" stroke="currentColor" stroke-width="2"
+                                      stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
                         <p class="field-hint" id="dateHint"></p>
                     </div>
                     <!-- Price and demand are not asked for: the model takes them
@@ -798,7 +837,7 @@
         }
 
         function startSkeletons() {
-            ['priceSkeleton', 'rheinSkeleton', 'cargoSkeleton'].forEach((id) => {
+            ['priceSkeleton', 'rheinSkeleton', 'cargoSkeleton', 'resultSkeleton'].forEach((id) => {
                 document.getElementById(id).hidden = false;
             });
         }
@@ -963,6 +1002,14 @@
             if (meanAtOrigin === null) meanAtOrigin = valueAt(priceData.dates, priceData.price, origin);
             if (weeklyPoint && originIdx >= 0 && meanAtOrigin !== null) {
                 mean[originIdx] = meanAtOrigin;
+            }
+            // The cone begins where the eye already is: on the last measured day,
+            // with a width of nothing. Both of its edges start on the 7-day mean of
+            // that day and only then widen with the square root of the horizon, so
+            // the blue area leads back to the last measurement instead of starting
+            // a week ahead of it and floating there.
+            if (originIdx >= 0 && meanAtOrigin !== null) {
+                upper[originIdx] = lower[originIdx] = Math.round(meanAtOrigin * 100) / 100;
             }
 
             // 2) The weekly model answers for the whole week after the origin day
@@ -1404,17 +1451,31 @@
 
         document.getElementById('forecastForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            await runPrediction(document.getElementById('dateInput').value, {scroll: true});
+        });
+
+        /* ------------------------------------------------------------------ *
+         * The prediction of the form - and of the first page load, which runs *
+         * it with the standard date: a forecast is only useful when it is     *
+         * already on the page, so the chart and the result card do not wait   *
+         * for a click on "Prognose berechnen".                                *
+         * ------------------------------------------------------------------ */
+        async function runPrediction(dateText, options = {}) {
             const btn = document.getElementById('predictBtn');
             const error = document.getElementById('error');
+            const card = document.getElementById('resultCard');
+            const skeleton = document.getElementById('resultSkeleton');
             error.hidden = true;
-            const isoDate = parseGermanDate(document.getElementById('dateInput').value);
+            const isoDate = parseGermanDate(dateText);
             if (!isoDate) {
                 error.textContent = 'Datum bitte im Format TT.MM.JJJJ eingeben, zum Beispiel 19.10.2026.';
                 error.hidden = false;
-                return;
+                if (skeleton) skeleton.hidden = true;
+                return false;
             }
             btn.disabled = true;
             btn.textContent = 'Berechne Prognose …';
+            if (skeleton) skeleton.hidden = false;
             try {
                 const body = {date: isoDate};
                 const res = await fetch('/predict', {
@@ -1426,7 +1487,7 @@
                 if (!res.ok) {
                     error.textContent = payload.error || 'Prognose fehlgeschlagen.';
                     error.hidden = false;
-                    return;
+                    return false;
                 }
                 const features = payload.features || {};
                 const prediction = payload.prediction_next_week_price;
@@ -1434,7 +1495,7 @@
                 const modelLabel = payload.model === 'forward_forecast'
                     ? `Vorhersagemodell · Horizont ${payload.forecast_horizon_days} Tage`
                     : 'Wochenmodell';
-                document.getElementById('resultCard').hidden = false;
+                card.hidden = false;
                 document.getElementById('resultLabel').textContent =
                     `Prognose für die Woche nach ${formatDate(payload.date)}`;
                 document.getElementById('resultPrice').textContent = fmt(prediction);
@@ -1452,17 +1513,55 @@
                 }
                 renderFeatures(features);
                 // The chart curve is built from the same live inputs the user just
-                // entered, so it must be rebuilt after a manual prediction.
-                loadForecast().catch(() => {});
-                document.getElementById('resultCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+                // entered, so it must be rebuilt after a manual prediction. On the
+                // first load the curve has only just arrived and is not asked twice.
+                if (options.refreshCurve !== false) loadForecast().catch(() => {});
+                // Only a prediction the user asked for moves the page. The one the
+                // page runs itself must not jump past the chart on loading.
+                if (options.scroll) card.scrollIntoView({behavior: 'smooth', block: 'center'});
+                return true;
             } catch (err) {
                 error.textContent = 'Prognose konnte nicht abgerufen werden.';
                 error.hidden = false;
+                return false;
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Prognose berechnen';
+                if (skeleton) skeleton.hidden = true;
             }
-        });
+        }
+
+        // The standard prediction of the page: the date the field already shows.
+        // The curve is already loaded here, so only the result card is filled.
+        async function loadDefaultPrediction() {
+            await runPrediction(document.getElementById('dateInput').value, {refreshCurve: false});
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Calendar button: the text field keeps the dd.mm.yyyy format, the    *
+         * browser calendar belongs to the transparent date field behind the   *
+         * button. The button hands the field content to that field before     *
+         * opening it, the field hands its ISO date back as dd.mm.yyyy.        *
+         * ------------------------------------------------------------------ */
+        function wireDatePicker() {
+            const dateInput = document.getElementById('dateInput');
+            const picker = document.getElementById('datePicker');
+            document.getElementById('datePickerBtn').addEventListener('click', () => {
+                picker.min = dateInput.min;
+                picker.max = dateInput.max;
+                const iso = parseGermanDate(dateInput.value);
+                picker.value = iso || defaultForecastDate();
+                if (picker.showPicker) picker.showPicker();
+                else picker.focus();
+            });
+            picker.addEventListener('change', () => {
+                if (!picker.value) return;
+                dateInput.value = formatDate(picker.value);
+                document.getElementById('error').hidden = true;
+            });
+        }
+
+        wireDatePicker();
 
         /* ------------------------------------------------------------------ *
          * Forecast curve: the price chart is extended by default, starting   *
@@ -1492,7 +1591,8 @@
                     + `Durchschnitt der ersten ${WEEKLY_FORECAST_DAYS} Tage</span>`);
             }
             chips.push(`<span class="chip is-model">Vorhersagemodell: ${fmt(last.value)} CHF in ${last.horizon_days} Tagen</span>`);
-            chips.push(`<span class="chip">Blauer Kegel: ±${fmt(last.band)} CHF am letzten Horizont `
+            chips.push(`<span class="chip">Blauer Kegel: ab ${formatDate(forecastData.origin_date)} `
+                + `mit Breite null, ±${fmt(last.band)} CHF am letzten Horizont `
                 + `(${formatDate(last.date)})</span>`);
             const measured = measuredForecastPoints();
             if (measured.length) {
@@ -1566,10 +1666,16 @@
 
         startSkeletons();
         // The forecast curve needs the price history (it defines the origin
-        // date), so it follows the history instead of racing it.
+        // date), so it follows the history instead of racing it. The prediction
+        // of the standard date follows the same chain: the page shows a computed
+        // forecast from the start instead of waiting for "Prognose berechnen".
         loadPriceHistory()
             .then(() => loadForecast())
-            .catch(() => { document.getElementById('priceSkeleton').hidden = true; });
+            .then(() => loadDefaultPrediction())
+            .catch(() => {
+                document.getElementById('priceSkeleton').hidden = true;
+                document.getElementById('resultSkeleton').hidden = true;
+            });
         loadRhein().catch(() => {
             document.getElementById('rheinSkeleton').hidden = true;
             document.getElementById('cargoSkeleton').hidden = true;
