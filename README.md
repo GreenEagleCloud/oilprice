@@ -550,7 +550,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.8
+ghcr.io/greeneaglecloud/oilprice-frontend:1.9
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

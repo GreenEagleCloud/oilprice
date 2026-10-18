@@ -374,7 +374,6 @@ def test_hover_box_snaps_to_the_day_under_the_cursor(page):
     # hovering fills it, leaving the chart clears it again
     hover = page[page.index("function setHover"): page.index("function handleHover")]
     assert "renderHoverCard(date)" in hover
-    assert "onLeave: () => setHover(null)" in page
     # the cursor is snapped to a day, never to the pixel between two days
     snap = page[page.index("function handleHover"): page.index("const hoverOptions")]
     assert "Math.round(chart.scales.x.getValueForPixel(evt.x))" in snap
@@ -389,3 +388,18 @@ def test_hover_marker_points_at_the_snapped_day(page):
     marker = page[page.index("function hoverMarkerAt"): page.index("const crosshairPlugin")]
     # the measured price wins over the forecast line, the band edges never
     assert "if (dataset.borderWidth === 0) continue" in marker
+
+
+
+def test_hover_is_wired_the_way_chartjs_calls_it(page):
+    """Chart.js ruft onHover mit (event, aktive Elemente, chart) auf. Stehen
+    die Parameter in einer anderen Reihenfolge, hält handleHover ein Array in
+    der Hand und Linie, Punkt und Box tauchen nie auf - auch nicht nach dem
+    Deploy auf die lebende Seite."""
+    options = page[page.index("const hoverOptions"): page.index("Skeleton loaders")]
+    assert "onHover: (evt, elements, chart) => handleHover(chart, evt, elements)" in options
+    # Chart.js kennt kein onLeave: der Canvas meldet das Verlassen der Fläche
+    assert "onLeave:" not in options
+    assert "addEventListener('mouseleave', () => setHover(null))" in options
+    # beide Zeitdiagramme reagieren, nicht nur das Preisdiagramm
+    assert "['priceChart', 'rheinChart'].forEach" in options

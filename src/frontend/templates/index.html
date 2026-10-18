@@ -822,9 +822,19 @@
             // 'index' without intersect: the whole chart area reacts, so the
             // crosshair, the marker and the box move with the cursor.
             interaction: {mode: 'index', intersect: false},
-            onHover: (evt, chart, elements) => handleHover(chart, evt, elements),
-            onLeave: () => setHover(null),
+            // Chart.js ruft onHover mit (event, aktive Elemente, chart) auf.
+            // Vertauscht man die beiden, hält man ein Array in der Hand und
+            // die Fläche reagiert auf keinen Mauszug.
+            onHover: (evt, elements, chart) => handleHover(chart, evt, elements),
         };
+
+        // Chart.js kennt kein "onLeave". Verlässt die Maus die Chartfläche,
+        // fängt das der Canvas ab, damit Linie, Punkt und Box nicht stehen
+        // bleiben.
+        ['priceChart', 'rheinChart'].forEach((id) => {
+            document.getElementById(id)
+                .addEventListener('mouseleave', () => setHover(null));
+        });
 
         /* ------------------------------------------------------------------ *
          * Skeleton loaders: shown until the data of a card has arrived.     *
