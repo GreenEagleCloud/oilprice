@@ -783,7 +783,11 @@
                             label: (item) => `${item.dataset.label}: ${item.parsed.y === null ? 'kein Wert' : fmt(item.parsed.y) + ' CHF/100 l'}`,
                             // combined tooltip: the Rhine level of the same date
                             footer: (items) => levelFooter(items[0].label),
-                        }},
+                        },
+                            // future days have no measurement yet; listing "kein
+                            // Wert" for all of them would bury the forecast values
+                            filter: (item) => !(item.dataset.label === 'Tatsächlich gemessen' && item.parsed.y === null),
+                        },
                     },
                     scales: {
                         x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},

@@ -158,6 +158,9 @@ def test_measured_prices_run_into_the_forecast_region(page):
     chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
     assert "'Tatsächlich gemessen'" in chart
     assert "data: forecast[4]" in chart
+    # days of the forecast window that are not measured yet must not flood the
+    # tooltip with "kein Wert"
+    assert "item.dataset.label === 'Tatsächlich gemessen' && item.parsed.y === null" in chart
     # the update path writes every forecast array, so the new series keeps its
     # data when the timeframe or the forecast changes
     assert "forecast.forEach((values, i) => { priceChart.data.datasets[2 + i].data = values; });" in chart
