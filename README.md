@@ -527,8 +527,10 @@ Dargestellt werden:
   `31.02.`. Der Kalender ist trotzdem da: hinter dem Kalender-Button des
   Textfelds liegt ein durchsichtiges `input type="date"` (`#datePicker`), das der
   Button mit `showPicker()` öffnet; sein ISO-Wert wird zurück ins Feld
-  geschrieben (`formatDate()`), und `min`/`max` des Feldes werden vorher an es
-  weitergegeben.
+  geschrieben (`formatDate()`). Die Grenzen des Kalenders – heute bis letzte
+  Messung + 90 Tage – stehen in ISO auf dem Picker (`picker.min = today`,
+  `picker.max = latest`), denn das deutsche Textfeld würde einen nativen Picker
+  kein bisschen begrenzen.
   Voreingestellt ist nicht die letzte Messung, sondern der **erste Tag
   ohne Messwert** – in der Regel morgen (`defaultForecastDate()`: letzte Messung
   + 1 Tag, nie vor heute; bewusst kein `toISOString()`). Obergrenze ist der
@@ -594,7 +596,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.14
+ghcr.io/greeneaglecloud/oilprice-frontend:1.15
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

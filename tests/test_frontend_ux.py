@@ -373,6 +373,9 @@ def test_date_input_is_clamped_to_the_supported_horizon(page):
     assert "dateInput.min = formatDate(today);" in body
     assert "dateInput.max = formatDate(latest);" in body
     assert "addDays(origin, 90)" in body
+    # the calendar of the picker needs the same limits in ISO, not in dd.mm.yyyy
+    assert "picker.min = today;" in body
+    assert "picker.max = latest;" in body
     # local date arithmetic: toISOString() would shift the day for every zone
     # east of UTC and the field would show the wrong range
     for anchor in ("const addDays", "function todayISO"):
@@ -440,11 +443,11 @@ def test_calendar_button_opens_the_browser_picker(page):
     from the date field behind the button. The button hands the field content to
     it before opening it, the picker hands its ISO date back as dd.mm.yyyy."""
     body = page[page.index("function wireDatePicker"): page.index("wireDatePicker();")]
-    assert "picker.min = dateInput.min;" in body
-    assert "picker.max = dateInput.max;" in body
     assert "picker.value = iso || defaultForecastDate();" in body
     assert "picker.showPicker()" in body
     assert "dateInput.value = formatDate(picker.value);" in body
+    # the picker never hands the German text to the API
+    assert "parseGermanDate(picker.value)" not in body
     # the picker is wired before the page starts loading
     assert page.index("wireDatePicker();") < page.index("startSkeletons();")
     # the transparent picker must beat the `.field input` rule, otherwise it

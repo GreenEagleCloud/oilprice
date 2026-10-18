@@ -1445,6 +1445,11 @@
             dateInput.value = formatDate(standard);
             dateInput.min = formatDate(today);
             dateInput.max = formatDate(latest);
+            // The browser calendar of the picker understands ISO dates only - the
+            // German text of the field would not limit it at all.
+            const picker = document.getElementById('datePicker');
+            picker.min = today;
+            picker.max = latest;
             document.getElementById('dateHint').textContent =
                 `Standard ist ${formatDate(standard)} – der erste Tag ohne Messwert; Prognosen bis `
                 + `${formatDate(latest)} möglich. Ausgangstag des Modells ist der letzte Messwert `
@@ -1549,8 +1554,6 @@
             const dateInput = document.getElementById('dateInput');
             const picker = document.getElementById('datePicker');
             document.getElementById('datePickerBtn').addEventListener('click', () => {
-                picker.min = dateInput.min;
-                picker.max = dateInput.max;
                 const iso = parseGermanDate(dateInput.value);
                 picker.value = iso || defaultForecastDate();
                 if (picker.showPicker) picker.showPicker();
