@@ -341,6 +341,21 @@ kubectl -n oilprice create job "feature-pipeline-manual-$(date +%Y%m%d%H%M%S)" \
   --from=cronjob/feature-pipeline
 ```
 
+Einmaliger Rhein-Bootstrap (volle Pegel-Historie seit 2020 und alle
+Fracht-Bulletins; schreibt `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`,
+`raw/rhein_cargo.csv` und `raw/rhein_bulletins_parsed.json` nach S3):
+
+```bash
+kubectl -n oilprice apply -f k8s/rhein-bootstrap-jobs.yaml
+kubectl -n oilprice wait --for=condition=complete job/rhein-levels-bootstrap --timeout=60m
+kubectl -n oilprice wait --for=condition=complete job/rhein-cargo-bootstrap --timeout=60m
+kubectl -n oilprice delete jobs -l purpose=rhein-bootstrap --ignore-not-found
+```
+
+Danach liest das Frontend die Rhein-Daten direkt aus S3 (`/api/rhein` meldet
+`"source": "s3"`); der Frontend-Cache (15 min) wird mit
+`kubectl -n oilprice rollout restart deployment/frontend` sofort neu geladen.
+
 Verifizierter Live-Test:
 
 ```bash
