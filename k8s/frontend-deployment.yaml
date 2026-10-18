@@ -17,7 +17,7 @@ spec:
       - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
       containers:
       - name: frontend
-        image: ghcr.io/greeneaglecloud/oilprice-frontend:1.9
+        image: ghcr.io/greeneaglecloud/oilprice-frontend:1.10
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
@@ -48,3 +48,7 @@ spec:
               key: aws_secret_access_key
         - name: AWS_ENDPOINT_URL
           value: "http://rook-ceph-rgw-objectstore.rook-ceph.svc:8080"
+        # the volatility cone on the chart is drawn out to three months; the
+        # forward model serves 1..90 days, weekly steps end at 84 days
+        - name: FORECAST_MAX_HORIZON
+          value: "90"

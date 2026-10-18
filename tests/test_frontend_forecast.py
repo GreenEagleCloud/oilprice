@@ -87,14 +87,17 @@ def test_curve_starts_with_the_weekly_model(fake_backend):
     assert first["date"] == "2026-10-13"
 
 
-def test_forward_model_extends_the_curve_to_two_months(fake_backend):
+def test_forward_model_extends_the_curve_to_three_months(fake_backend):
+    """The cone on the chart is drawn out to three months, which is the longest
+    horizon the forward model serves (weekly steps end at 84 days)."""
     _, body = get_forecast()
     forward = [p for p in body["points"] if p["model"] == "forward"]
-    assert [p["horizon_days"] for p in forward] == [7, 14, 21, 28, 35, 42, 49, 56]
-    assert body["max_horizon_days"] == 56
+    horizons = [7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84]
+    assert [p["horizon_days"] for p in forward] == horizons
+    assert body["max_horizon_days"] == 84
     expected = [
         (pd.Timestamp(ORIGIN) + pd.Timedelta(days=h + 4)).strftime("%Y-%m-%d")
-        for h in (7, 14, 21, 28, 35, 42, 49, 56)
+        for h in horizons
     ]
     assert [p["date"] for p in forward] == expected
     # the weekly point and the first forward point describe different weeks, so
@@ -158,7 +161,7 @@ def test_single_broken_horizon_does_not_drop_the_curve(fake_backend, monkeypatch
     assert status == 200
     assert 28 not in [p["horizon_days"] for p in body["points"]]
     assert body["errors"]["forward_28d"]
-    assert len(body["points"]) == 8  # weekly + 7 forward steps
+    assert len(body["points"]) == 12  # weekly + 11 of the 12 forward steps
 
 
 def test_unreachable_service_reports_one_error_without_retrying(fake_backend, monkeypatch):

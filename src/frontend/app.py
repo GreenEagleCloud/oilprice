@@ -173,7 +173,9 @@ def _read_price_history() -> tuple:
 # the origin date: as soon as a forecasted day is measured, the real price is
 # drawn through the forecast region so prediction and reality are comparable.
 # ---------------------------------------------------------------------------
-FORECAST_MAX_HORIZON = int(os.environ.get("FORECAST_MAX_HORIZON", 60))
+# The chart cone is drawn out to three months: the forward model serves up to
+# 90 days, and the horizon steps are weekly, so the last point lands at 84 days.
+FORECAST_MAX_HORIZON = int(os.environ.get("FORECAST_MAX_HORIZON", 90))
 FORECAST_CACHE_TTL = int(os.environ.get("FORECAST_CACHE_TTL", 10 * 60))
 WEEKLY_HORIZON_DAYS = 7  # the weekly model always answers for the next 7 days
 # Horizon steps asked of the forward model (its feature view serves 1..90 days).

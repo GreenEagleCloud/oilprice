@@ -436,19 +436,20 @@ Dargestellt werden:
 * **Monats-Achse** – die x-Achse beschriftet nur die Monatsanfänge (`Jan`,
   `Feb` … `Dez`, Januar trägt das Jahr); in langen Zeiträumen wird jedes n-te
   Monat beschriftet, jedes Januar zusätzlich. Das genaue Datum steht im
-  Hover-Kasten und im Ablese-Kasten darüber (das Pegel-Diagramm benutzt
-  weiterhin den Chart.js-Tooltip mit Datum).
+  Ablese-Kasten über dem Diagramm (das Pegel-Diagramm benutzt weiterhin den
+  Chart.js-Tooltip mit Datum).
 
-* **Hover-Kasten und Fadenkreuz** – wie beim Liniendiagramm von heizoel24.ch:
-  im Preisdiagramm springt eine dünne graue Senkrechte auf den Tag, der dem
-  Cursor am nächsten liegt, ein Punkt markiert genau diesen Tag auf der Linie,
-  und daneben erscheint ein Kasten mit Datum, Preis, 7-Tage-Mittel,
-  Nachfrageindex, Rheinpegel und – im Prognosebereich – der Prognose samt
-  Differenz zur Messung. Der Kasten klappt an die andere Seite der Linie, wenn
-  rechts kein Platz ist, und bleibt innerhalb des Diagramms; der Chart.js-Tooltip
-  ist dafür ausgeschaltet. Dieselbe Senkrechte erscheint im Pegel-Diagramm.
-  Über dem Diagramm steht der Ablese-Kasten: standardmässig die letzte Messung,
-  beim Überfahren der Tag unter dem Cursor.
+* **Fadenkreuz beim Überfahren** – im Preisdiagramm springt eine dünne graue
+  Senkrechte auf den Tag, der dem Cursor am nächsten liegt, und auf jeder
+  gezeichneten Linie der Preisachse markiert ein Punkt in der Farbe dieser
+  Linie genau diesen Tag. Ein eigener Kasten im Diagramm gibt es nicht mehr:
+  Datum, Preis, 7-Tage-Mittel, Nachfrageindex, Rheinpegel und – im
+  Prognosebereich – die Prognose samt Differenz zur Messung stehen im
+  Ablese-Kasten über dem Diagramm, der standardmässig die letzte Messung zeigt
+  und beim Überfahren den Tag unter dem Cursor. Ein Tag ohne Messwert sagt das
+  ausdrücklich („kein gemessener Preis"). Der Chart.js-Tooltip ist dafür
+  ausgeschaltet; dieselbe Senkrechte erscheint im Pegel-Diagramm, und
+  `mouseleave` am Canvas räumt die Markierung auf (Chart.js kennt kein `onLeave`).
 
 * **Marke** – Favicon und Logo sind `src/frontend/static/logo.svg`; das
   Farb-Schema ist die greenEagle.cloud-Palette (Logo-Grün `#38f75c`,
@@ -467,27 +468,34 @@ Dargestellt werden:
 
 * **Prognose-Kurve im Preisdiagramm** (`GET /api/forecast`) – die Preislinie
   endet nicht bei der letzten Messung (senkrechte Marke „letzte Messung“),
-  sondern geht gestrichelt weiter: der erste Punkt kommt vom Wochenmodell, die
-  folgenden Punkte in 7-Tage-Schritten vom Vorhersagemodell – standardmässig bis
-  60 Tage (`FORECAST_MAX_HORIZON`, Obergrenze des Feature Views: 90 Tage).
-  Beide Modelle sagen den Durchschnittspreis der **Woche nach** dem angefragten
-  Datum voraus; gezeichnet wird deshalb jeweils die Wochenmitte
-  (`Zieldatum + 4 Tage`, `_forecast_week_midpoint`). Würde man das Zieldatum
-  selbst nehmen, läge jeder Punkt eine Woche zu früh. Die Kurve wird serverseitig
-  gebaut – der Browser bräuchte sonst pro Horizontschritt eine eigene
-  `/predict`-Anfrage. Ein 502 des Inferenz-Dienstes bricht die Serie nach dem
-  ersten Versuch ab statt neun Timeouts zu produzieren; fehlende Horizonte
+  sondern geht gestrichelt weiter: die dunkle Linie des 7-Tage-Mittels läuft bis
+  zum Ausgangstag und übergibt dort an die rote Wochenprognose, die folgenden
+  Punkte in 7-Tage-Schritten kommen vom Vorhersagemodell – standardmässig bis
+  84 Tage, also drei Monate (`FORECAST_MAX_HORIZON`, Obergrenze des Feature
+  Views: 90 Tage). Beide Modelle sagen den Durchschnittspreis der **Woche nach**
+  dem angefragten Datum voraus; gezeichnet wird der Vorhersagemodell-Punkt
+  deshalb an der Wochenmitte (`Zieldatum + 4 Tage`, `_forecast_week_midpoint`).
+  Würde man das Zieldatum selbst nehmen, läge jeder Punkt eine Woche zu früh.
+  Der Wochenmodell-Wert ist der Durchschnitt der sieben Tage nach dem
+  Ausgangstag und wird auf **jeden** dieser Tage gezeichnet – die rote Linie
+  sieht damit aus wie das 7-Tage-Mittel, das sie vorhersagt, und hängt an der
+  schwarzen Mittellinie statt in der Luft zu schweben. `spanGaps: true` hält
+  Vorhersage- und Wochenlinie zu einer Linie verbunden. Die Kurve wird
+  serverseitig gebaut – der Browser bräuchte sonst pro Horizontschritt eine
+  eigene `/predict`-Anfrage. Ein 502 des Inferenz-Dienstes bricht die Serie nach
+  dem ersten Versuch ab statt neun Timeouts zu produzieren; fehlende Horizonte
   erscheinen als `errors` und als Warn-Chip unter dem Diagramm.
-* **Schwankungsband** – die Modelle liefern nur einen Punkt, keine
-  Unsicherheit. Das Band um die Prognoselinie ist deshalb eine ausdrücklich
+* **Schwankungsband (blauer Kegel)** – die Modelle liefern nur einen Punkt, keine
+  Unsicherheit. Der Kegel um die Prognoselinie ist deshalb eine ausdrücklich
   benannte Schätzung: Standardabweichung der 7-Tage-Preisänderung über die
   letzten drei Jahre (`FORECAST_VOLATILITY_DAYS`), skaliert mit
-  `sqrt(Horizont / 7)` (Multiplikator `FORECAST_BAND_SIGMA`). Auf der echten
-  Serie ergibt das rund ±5 CHF nach 7 Tagen und ±14 CHF nach 56 Tagen – etwas
-  weiter als der Fehler einer naiven Fortschreibung, weil das Band die
-  Preisschwankung selbst abbildet und nicht die Modellrestfehler. Es ist kein
-  Konfidenzintervall der Modelle und wird in der Oberfläche auch nicht so
-  genannt.
+  `sqrt(Horizont / 7)` (Multiplikator `FORECAST_BAND_SIGMA`) und in Marken-Blau
+  `rgba(6, 106, 171, .16)` gefüllt – er beginnt bei der ersten Prognosewoche und
+  wächst bis zum letzten Horizont. Auf der echten Serie ergibt das rund ±5 CHF
+  nach 7 Tagen und ±18 CHF nach 84 Tagen – etwas weiter als der Fehler einer
+  naiven Fortschreibung, weil das Band die Preisschwankung selbst abbildet und
+  nicht die Modellrestfehler. Es ist kein Konfidenzintervall der Modelle und
+  wird in der Oberfläche auch nicht so genannt.
 * **Gemessene Tagespreise im Prognosefenster** (`measured` in `/api/forecast`) –
   die Geschichte darf nicht an der letzten Messung enden, wo die Prognose beginnt:
   der Response enthält für jeden Kalendertag vom Ausgangstag bis zum letzten
@@ -497,15 +505,21 @@ Dargestellt werden:
   bekommt für jeden dieser Tage ein Label, sonst hätte die Linie keinen Platz.
   Sobald ein prognostizierter Tag veröffentlicht ist, liegt er damit auf der
   Kurve, und unter dem Diagramm steht je Prognosepunkt die Abweichung
-  „Prognose minus gemessen".
+  „Prognose minus gemessen" – beim Wochenmodell gegen den Durchschnitt seiner
+  sieben Tage, nicht gegen den Preis eines einzelnen Tages darin.
 
 * **Prognose-Formular** – der Browser ruft `POST /predict` nur noch mit dem
   Eingabedatum auf: `current_price`/`current_demand` sind keine Felder mehr,
   beide Werte kommen aus dem Online-Feature-Store (die API nimmt sie weiterhin
-  an, falls ein Client sie mitgeben will). Das Eingabedatum ist mit **heute**
-  vorbelegt (`todayISO()` in der lokalen Zeitzone, bewusst kein `toISOString()`),
-  `min` ist heute und `max` der letzte vom Vorhersagemodell bedienbare Tag
-  (letzte Messung + 90 Tage, mindestens heute + 90).
+  an, falls ein Client sie mitgeben will). Das Datum steht im Feld **TT.MM.JJJJ**
+  – ein Textfeld und kein natives Datumsfeld, weil dieses das Datum in der
+  Locale des Browsers anzeigt (en-US: `10/19/2026`); `parseGermanDate()` wandelt
+  die Eingabe in das ISO-Datum der API und verwirft unmögliche Daten wie
+  `31.02.`. Voreingestellt ist nicht die letzte Messung, sondern der **erste Tag
+  ohne Messwert** – in der Regel morgen (`defaultForecastDate()`: letzte Messung
+  + 1 Tag, nie vor heute; bewusst kein `toISOString()`). Obergrenze ist der
+  letzte vom Vorhersagemodell bedienbare Tag (letzte Messung + 90 Tage,
+  mindestens heute + 90).
 
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
@@ -550,7 +564,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.9
+ghcr.io/greeneaglecloud/oilprice-frontend:1.10
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

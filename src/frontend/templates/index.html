@@ -103,25 +103,11 @@
         .readout .r-forecast { color: var(--red); }
 
         /* ------------------------------------------------------------------ *
-         * Hover box (line chart of heizoel24.ch): it sits inside the chart,  *
-         * right next to the grey line that snaps to the day under the cursor.*
+         * Hover marker: the plot area itself carries the day under the       *
+         * cursor - a thin grey line plus one point on every line of that day.*
+         * The values of that day are read in the readout box above the       *
+         * chart, so nothing is drawn into the diagram itself.                *
          * ------------------------------------------------------------------ */
-        .hover-card {
-            position: absolute; z-index: 3; left: 0; top: 0;
-            min-width: 126px; max-width: 224px; padding: 8px 10px;
-            pointer-events: none;
-            border: 1px solid var(--line); border-left: 4px solid var(--green);
-            border-radius: 8px; background: rgba(255, 255, 255, .97);
-            box-shadow: 0 4px 14px rgba(34, 47, 62, .14);
-            font-size: .78rem; line-height: 1.35; color: var(--ink);
-        }
-        .hover-card[hidden] { display: none; }
-        .hover-card .h-date { display: block; font-size: .72rem; letter-spacing: .04em;
-            text-transform: uppercase; color: var(--muted); }
-        .hover-card .h-price { font-size: 1.15rem; font-weight: 800; }
-        .hover-card .h-unit { font-size: .72rem; font-weight: 600; color: var(--muted); }
-        .hover-card .h-extra { display: block; margin-top: 3px; font-size: .72rem; color: var(--muted); }
-        .hover-card .h-extra.is-forecast { color: var(--red); }
 
         .skeleton { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
         .skeleton-bars { display: flex; align-items: flex-end; gap: 8px; height: 100%; padding: 12px 4px 26px; }
@@ -364,20 +350,23 @@
                     keine ausgelassenen Tage – bis hin zum heute. Die blaue Linie
                     rechts ist der Nachfrageindex (2020 = 100). Ab der letzten
                     Messung – markiert durch die senkrechte Linie – geht es
-                    gestrichelt weiter: der erste Punkt kommt vom Wochenmodell,
-                    die Linie danach vom Vorhersagemodell in 7-Tage-Schritten.
-                    Die gemessenen Tage des Prognosefensters zeichnet dieselbe
-                    grüne Linie, damit Vorhersage und Realität im gleichen
-                    Diagramm vergleichbar bleiben. Das flächige Band ist keine
+                    gestrichelt weiter: die schwarze Linie des 7-Tage-Mittels
+                    läuft in die Prognose hinein und endet bei der roten
+                    Wochenprognose, die den Durchschnitt der ersten sieben Tage
+                    auf jeden einzelnen dieser Tage zeichnet. Danach übernimmt
+                    das Vorhersagemodell in 7-Tage-Schritten. Die gemessenen
+                    Tage des Prognosefensters zeichnet dieselbe grüne Linie,
+                    damit Vorhersage und Realität im gleichen Diagramm
+                    vergleichbar bleiben. Der blaue Kegel ist keine
                     Modellunsicherheit, sondern eine Schätzung aus der
                     beobachteten Preisvolatilität (Standardabweichung der
                     7-Tage-Änderung über drei Jahre, wächst mit der Wurzel des
-                    Horizonts). Fahre mit der Maus über das Diagramm: eine
-                    graue Linie springt auf den nächsten Tag, ein Punkt markiert
-                    ihn auf der Linie, und die Info-Box daneben zeigt Datum,
-                    Preis, 7-Tage-Mittel, Nachfrageindex und - im Prognosebereich
-                    - die Vorhersage. Im Pegel-Diagramm erscheint dieselbe Linie.
-                    Die x-Achse beschriftet nur die Monatsanfänge.
+                    Horizonts) und reicht über drei Monate. Fahre mit der Maus
+                    über das Diagramm: eine graue Linie springt auf den nächsten
+                    Tag, und ein Punkt markiert ihn auf jeder Linie – Datum,
+                    Preis, 7-Tage-Mittel, Nachfrageindex und Vorhersage stehen
+                    in der Zeile über dem Diagramm. Im Pegel-Diagramm erscheint
+                    dieselbe Linie. Die x-Achse beschriftet nur die Monatsanfänge.
                 </div>
             </div>
             <div class="readout" id="priceReadout" aria-live="polite">
@@ -391,9 +380,9 @@
                     <div class="skeleton-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
                 </div>
                 <canvas id="priceChart" class="chart-canvas" hidden></canvas>
-                <!-- Hover box: it follows the grey line that snaps to the day
-                     under the cursor, like the line chart of heizoel24.ch. -->
-                <div class="hover-card" id="priceHoverCard" hidden></div>
+                <!-- Kein Kasten im Diagramm: der markierte Tag ist die graue
+                     Linie mit ihren Punkten, seine Werte stehen oben in
+                     #priceReadout. -->
             </div>
             <!-- The forecast belongs to the chart: the history line continues as
                  a dotted line, so origin, horizon and band are stated here. -->
@@ -418,8 +407,14 @@
                 <form class="card forecast-form" id="forecastForm">
                     <h2>Prognose erstellen</h2>
                     <div class="field">
-                        <input type="date" id="dateInput" placeholder=" " required>
-                        <label for="dateInput">Eingabedatum</label>
+                        <!-- Not a native date field: the native picker prints
+                             the date in the locale of the browser - en-US
+                             prints 10/19/2026 there. This page always writes
+                             dd.mm.yyyy. -->
+                        <input type="text" id="dateInput" inputmode="numeric"
+                               autocomplete="off" spellcheck="false"
+                               placeholder=" " maxlength="10" required>
+                        <label for="dateInput">Eingabedatum (TT.MM.JJJJ)</label>
                         <p class="field-hint" id="dateHint"></p>
                     </div>
                     <!-- Price and demand are not asked for: the model takes them
@@ -584,16 +579,22 @@
         let priceChart = null, rheinChart = null, cargoChart = null;
         const timeCharts = () => [priceChart, rheinChart].filter(Boolean);
 
-        // The value the hover marker sits on: the measured price first, then
-        // the forecast line, then the Rhine level - always the primary axis.
-        function hoverMarkerAt(chart, index) {
+        // The points the hover marker sits on: every drawn line of the primary
+        // price axis that carries a value on that day - measured price, 7-day
+        // mean and the forecast lines. The two invisible band edges, series on
+        // their own axis (demand index) and series marked `hoverMarker: false`
+        // (the horizontal low-water marks) never get a point.
+        function hoverMarkers(chart, index) {
+            const markers = [];
             for (const dataset of chart.data.datasets || []) {
                 if (dataset.yAxisID && dataset.yAxisID !== 'y') continue;
                 if (dataset.borderWidth === 0) continue;   // the two band edges
+                if (dataset.hoverMarker === false) continue;
                 const value = (dataset.data || [])[index];
-                if (value !== null && value !== undefined) return value;
+                if (value === null || value === undefined) continue;
+                markers.push({value: value, color: dataset.borderColor || '#38f75c'});
             }
-            return null;
+            return markers;
         }
 
         // Vertical guide line at the hovered date, drawn in every time chart.
@@ -616,14 +617,13 @@
                 ctx.moveTo(x, top);
                 ctx.lineTo(x, bottom);
                 ctx.stroke();
-                // The line has to point at something: a point on the curve marks
-                // the exact day the box speaks about.
-                const marker = hoverMarkerAt(chart, idx);
-                if (marker !== null) {
-                    const y = chart.scales.y.getPixelForValue(marker);
+                // The line has to point at something: one point per line of the
+                // primary axis, each in the colour of its own line.
+                for (const marker of hoverMarkers(chart, idx)) {
+                    const y = chart.scales.y.getPixelForValue(marker.value);
                     ctx.beginPath();
                     ctx.arc(x, y, 4, 0, Math.PI * 2);
-                    ctx.fillStyle = '#38f75c';
+                    ctx.fillStyle = marker.color;
                     ctx.fill();
                     ctx.lineWidth = 1.5;
                     ctx.strokeStyle = '#ffffff';
@@ -698,7 +698,7 @@
             return forecastData.points.find((p) => p.date === date) || null;
         }
 
-        // Everything the info box answers for one date: measured price, 7-day
+        // Everything the readout answers for one date: measured price, 7-day
         // mean, demand index, forecast value and the Rhine level of that day.
         function readoutParts(date) {
             const price = valueAt(priceData.dates, priceData.price, date);
@@ -729,79 +729,32 @@
             const extras = parts.extras
                 .map((entry) => entry.forecast
                     ? `<span class="r-forecast">${entry.text}</span>`
-                    : `<span>${entry.text}</span>`)
-                .join(' · ');
+                    : `<span>${entry.text}</span>`);
+            // A hovered day the source has not published yet must not read as
+            // "0": the readout says plainly that there is no measurement for it.
+            if (hoverDate && parts.price === null) extras.unshift('<span>kein gemessener Preis</span>');
             document.getElementById('priceReadout').innerHTML = [
                 `<span class="r-date">${formatDate(date)}${hoverDate ? '' : ' · letzte Messung'}</span>`,
                 `<span class="r-price">${parts.price === null ? '–' : fmt(parts.price)}</span>`,
                 '<span class="r-unit">CHF/100 l</span>',
-                extras ? `<span class="r-extra">${extras}</span>` : '',
+                extras.length ? `<span class="r-extra">${extras.join(' · ')}</span>` : '',
             ].join('');
         }
 
         /* ------------------------------------------------------------------ *
-         * Hover box inside the chart (line chart of heizoel24.ch): the grey  *
-         * line snaps to the day under the cursor and the box next to it      *
-         * names that day, its price and the values belonging to it.          *
+         * Hover: the grey line snaps to the day under the cursor and the    *
+         * points mark it on every line; the readout box above the chart     *
+         * names that day, its price and the values belonging to it.         *
          * ------------------------------------------------------------------ */
-        function renderHoverCard(date) {
-            const card = document.getElementById('priceHoverCard');
-            if (!priceChart) { card.hidden = true; return; }
-            const labels = priceChart.data.labels || [];
-            const idx = date ? labels.indexOf(date) : -1;
-            if (idx < 0) {
-                card.hidden = true;
-                card.innerHTML = '';
-                return;
-            }
-            const parts = readoutParts(date);
-            const extras = parts.extras.map((entry) =>
-                `<span class="h-extra${entry.forecast ? ' is-forecast' : ''}">${entry.text}</span>`);
-            if (parts.price === null) {
-                // A day the source has not published yet must not read as "0":
-                // the box says plainly that there is no measurement for it.
-                extras.unshift('<span class="h-extra">kein gemessener Preis</span>');
-            }
-            card.innerHTML = [
-                `<span class="h-date">${formatDate(date)}</span>`,
-                `<span class="h-price">${parts.price === null ? '–' : fmt(parts.price)}</span>`,
-                '<span class="h-unit">CHF/100 l</span>',
-                extras.join(''),
-            ].join('');
-            card.hidden = false;
-            positionHoverCard(priceChart, idx);
-        }
-
-        // The box follows the snapped day: to the right of the line, flipped to
-        // its left when there is no room, and never outside the chart area.
-        function positionHoverCard(chart, idx) {
-            const card = document.getElementById('priceHoverCard');
-            const area = chart.chartArea;
-            const x = chart.scales.x.getPixelForValue(idx);
-            const value = hoverMarkerAt(chart, idx);
-            const width = card.offsetWidth || 150;
-            const height = card.offsetHeight || 64;
-            const gap = 12;
-            let left = x + gap;
-            if (left + width > area.right) left = x - gap - width;
-            left = Math.max(area.left, Math.min(left, area.right - width));
-            let top = value === null ? area.top + gap
-                : chart.scales.y.getPixelForValue(value) - height - 12;
-            top = Math.max(area.top + 2, Math.min(top, area.bottom - height - 2));
-            card.style.left = `${Math.round(left)}px`;
-            card.style.top = `${Math.round(top)}px`;
-        }
-
         function setHover(date) {
             if (date === hoverDate) return;
             hoverDate = date;
             timeCharts().forEach((c) => c.update('none'));
             updateReadout();
-            renderHoverCard(date);
         }
 
-        // Snap the cursor to the nearest day: the line, the marker and the box
-        // always speak about a real day, never about the pixel between two.
+        // Snap the cursor to the nearest day: the line and its points always
+        // speak about a real day, never about the pixel between two.
         function handleHover(chart, evt, elements) {
             const labels = chart.data.labels || [];
             if (!labels.length) return;
@@ -820,7 +773,7 @@
 
         const hoverOptions = {
             // 'index' without intersect: the whole chart area reacts, so the
-            // crosshair, the marker and the box move with the cursor.
+            // crosshair and its points move with the cursor.
             interaction: {mode: 'index', intersect: false},
             // Chart.js ruft onHover mit (event, aktive Elemente, chart) auf.
             // Vertauscht man die beiden, hält man ein Array in der Hand und
@@ -829,7 +782,7 @@
         };
 
         // Chart.js kennt kein "onLeave". Verlässt die Maus die Chartfläche,
-        // fängt das der Canvas ab, damit Linie, Punkt und Box nicht stehen
+        // fängt das der Canvas ab, damit Linie und Punkte nicht stehen
         // bleiben.
         ['priceChart', 'rheinChart'].forEach((id) => {
             document.getElementById(id)
@@ -941,12 +894,19 @@
         /* ------------------------------------------------------------------ *
          * Price chart: measured history plus the dotted forecast curve       *
          *                                                                    *
-         * The history line is extended into the future: the weekly model     *
-         * gives the first week, the forward model the weeks after that. The  *
-         * band around it is the volatility estimate from /api/forecast - the *
-         * models themselves return a point prediction only.                 *
+         * The curve is continued from the line the eye already follows: the  *
+         * black 7-day mean runs on to the origin day and hands over to the   *
+         * red weekly model. The weekly model is drawn on every one of the    *
+         * seven days it stands for - it predicts the average price of the    *
+         * next week, so a value on each of those days is exactly what it     *
+         * says, and the red line reads like the 7-day mean it forecasts.     *
+         * The forward model continues at the end of that week. The blue cone *
+         * around the curve is the volatility estimate from /api/forecast -   *
+         * the models themselves return a point prediction only - and it is   *
+         * drawn out to three months.                                         *
          * ------------------------------------------------------------------ */
-        const FORECAST_BAND = 'rgba(236, 81, 70, .14)';
+        const FORECAST_BAND = 'rgba(6, 106, 171, .16)';   // brand blue cone
+        const WEEKLY_FORECAST_DAYS = 7;  // the week the weekly model describes
 
         // The x axis must reach into the future, otherwise the forecast points
         // have no label to sit on. History days and forecast days are separate
@@ -965,50 +925,107 @@
             (forecastData.measured || []).forEach((m) => {
                 if (!known.has(m.date)) extra.add(m.date);
             });
+            // The weekly model is drawn on each day of the week it describes, so
+            // every one of those days needs a label on the axis too.
+            for (let day = 1; day <= WEEKLY_FORECAST_DAYS; day++) {
+                const date = addDays(forecastData.origin_date, day);
+                if (!known.has(date)) extra.add(date);
+            }
             return historyDates.concat(Array.from(extra).sort());
         }
 
         function forecastSeries(dates) {
             const upper = dates.map(() => null);
             const lower = dates.map(() => null);
-            const line = dates.map(() => null);
-            const weekly = dates.map(() => null);
+            const line = dates.map(() => null);      // forward model
+            const weekly = dates.map(() => null);    // weekly model, one value per day
+            const mean = dates.map(() => null);      // 7-day mean into the forecast
             const measured = dates.map(() => null);
             if (!forecastData || !forecastData.points || !forecastData.points.length) {
-                return [upper, lower, line, weekly, measured];
+                return [upper, lower, line, weekly, mean, measured];
             }
             const points = forecastData.points;
-            const firstIdx = dates.indexOf(points[0].date);
-            const anchor = valueAt(dates, priceData.price, forecastData.origin_date);
-            if (anchor !== null && firstIdx > 0) {
-                // connector: the dotted line must start at the last measured price
-                line[firstIdx - 1] = anchor;
+            const origin = forecastData.origin_date;
+            const originIdx = dates.indexOf(origin);
+            const weeklyPoint = points.find((p) => p.model === 'weekly') || null;
+            const forwardPoints = points.filter((p) => p.model !== 'weekly');
+            const weekEnd = addDays(origin, WEEKLY_FORECAST_DAYS);
+            const weekEndIdx = dates.indexOf(weekEnd);
+
+            // 1) The black 7-day-mean line does not stop at the last measurement:
+            //    it runs on to the origin day, which is where the forecast begins.
+            let meanAtOrigin = valueAt(dates, priceMean7, origin);
+            if (meanAtOrigin === null) meanAtOrigin = valueAt(dates, priceData.price, origin);
+            if (weeklyPoint && originIdx >= 0 && meanAtOrigin !== null) {
+                mean[originIdx] = meanAtOrigin;
             }
-            points.forEach((p) => {
+
+            // 2) The weekly model answers for the whole week after the origin day
+            //    and its number is the average of that week. Drawing it on each
+            //    of its seven days is therefore exactly what it says - and it
+            //    makes the red line look like the 7-day mean it predicts.
+            if (weeklyPoint) {
+                for (let day = 1; day <= WEEKLY_FORECAST_DAYS; day++) {
+                    const i = dates.indexOf(addDays(origin, day));
+                    if (i < 0) continue;
+                    weekly[i] = weeklyPoint.value;
+                    // the cone covers the first week too, from its first day on
+                    upper[i] = Math.round((weeklyPoint.value + weeklyPoint.band) * 100) / 100;
+                    lower[i] = Math.round((weeklyPoint.value - weeklyPoint.band) * 100) / 100;
+                }
+                // the hand-over: the mean line ends on the weekly value
+                if (weekEndIdx >= 0) mean[weekEndIdx] = weeklyPoint.value;
+            }
+
+            // 3) The forward model takes over where the week of the weekly model
+            //    ends, so the two red segments are one line and not two islands.
+            forwardPoints.forEach((p) => {
                 const i = dates.indexOf(p.date);
                 if (i < 0) return;
                 line[i] = p.value;
                 // rounded: the band is drawn and read to two decimals anyway
                 upper[i] = Math.round((p.value + p.band) * 100) / 100;
                 lower[i] = Math.round((p.value - p.band) * 100) / 100;
-                if (p.model === 'weekly') weekly[i] = p.value;
             });
+            const firstForwardIdx = forwardPoints.length ? dates.indexOf(forwardPoints[0].date) : -1;
+            if (firstForwardIdx > 0) {
+                if (weeklyPoint && weekEndIdx >= 0) {
+                    line[weekEndIdx] = weeklyPoint.value;
+                } else if (originIdx >= 0 && meanAtOrigin !== null) {
+                    line[originIdx] = meanAtOrigin;
+                }
+            }
+
             // Real prices inside the forecast window: the history line keeps
             // running through the prediction as soon as those days are published.
             (forecastData.measured || []).forEach((m) => {
                 const i = dates.indexOf(m.date);
                 if (i >= 0 && m.value !== null && m.value !== undefined) measured[i] = m.value;
             });
-            return [upper, lower, line, weekly, measured];
+            return [upper, lower, line, weekly, mean, measured];
         }
 
         // Forecast points whose week already has a measured price, with the
         // difference prediction minus measurement. Empty while the whole curve
-        // still lies in the future.
+        // still lies in the future. The weekly model describes the seven days
+        // after the origin day, so it is compared with the mean of exactly
+        // those days - not with the price of one day inside the week.
         function measuredForecastPoints() {
             if (!forecastData || !forecastData.measured || !forecastData.points) return [];
             const out = [];
             forecastData.points.forEach((p) => {
+                if (p.model === 'weekly') {
+                    const week = [];
+                    for (let day = 1; day <= WEEKLY_FORECAST_DAYS; day++) {
+                        const date = addDays(p.origin_date || forecastData.origin_date, day);
+                        const entry = forecastData.measured.find((m) => m.date === date);
+                        if (entry && entry.value !== null && entry.value !== undefined) week.push(entry.value);
+                    }
+                    if (!week.length) return;
+                    const mean = week.reduce((sum, v) => sum + v, 0) / week.length;
+                    out.push({date: p.date, model: p.model, diff: p.value - mean});
+                    return;
+                }
                 const entry = forecastData.measured.find((m) => m.date === p.date);
                 if (!entry || entry.value === null || entry.value === undefined) return;
                 out.push({date: p.date, model: p.model, diff: p.value - entry.value});
@@ -1037,7 +1054,6 @@
                 forecast.forEach((values, i) => { priceChart.data.datasets[3 + i].data = values; });
                 priceChart.update();
                 updateReadout();
-                renderHoverCard(hoverDate);
                 return;
             }
             priceChart = new Chart(document.getElementById('priceChart'), {
@@ -1050,16 +1066,27 @@
                         {label: 'Preis (gemessen)', data: history[0], borderColor: '#38f75c', backgroundColor: 'rgba(56, 247, 92, .10)', borderWidth: 2, tension: .15, pointRadius: 0, pointHoverRadius: 3, spanGaps: true, fill: true, yAxisID: 'y'},
                         {label: '7-Tage-Mittel', data: history[1], borderColor: '#222f3e', borderWidth: 1.5, borderDash: [4, 3], tension: .15, pointRadius: 0, spanGaps: true, fill: false, yAxisID: 'y'},
                         {label: 'Nachfrageindex', data: history[2], borderColor: '#066aab', borderWidth: 1.5, tension: .15, pointRadius: 0, pointHoverRadius: 3, spanGaps: true, fill: false, yAxisID: 'y1'},
-                        // Band: the upper edge is filled down to the next dataset.
-                        {label: 'Band obere Marke', data: forecast[0], borderColor: 'transparent', backgroundColor: FORECAST_BAND, borderWidth: 0, pointRadius: 0, fill: '+1', tension: .2},
-                        {label: 'Band untere Marke', data: forecast[1], borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, fill: false, tension: .2},
-                        {label: 'Prognose (Vorhersagemodell)', data: forecast[2], borderColor: '#ec5146', borderWidth: 2, borderDash: [7, 5], tension: .2, pointRadius: 0},
-                        {label: 'Prognose (Wochenmodell)', data: forecast[3], borderColor: '#ec5146', borderWidth: 2, borderDash: [2, 3], tension: 0, pointRadius: 4},
+                        // Der blaue Kegel: die obere Kante wird bis zur unteren
+                        // Kante gefüllt, zusammen ergibt das die Schwankungs-
+                        // bandbreite über den ganzen Prognosezeitraum.
+                        {label: 'Prognose-Band (obere Marke)', data: forecast[0], borderColor: 'transparent', backgroundColor: FORECAST_BAND, borderWidth: 0, pointRadius: 0, fill: '+1', tension: .2, spanGaps: true},
+                        {label: 'Prognose-Band (untere Marke)', data: forecast[1], borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, fill: false, tension: .2, spanGaps: true},
+                        // spanGaps: the model answers one value per week, and the
+                        // line through those values must still be one line.
+                        {label: 'Prognose (Vorhersagemodell)', data: forecast[2], borderColor: '#ec5146', borderWidth: 2, borderDash: [7, 5], tension: .2, pointRadius: 0, spanGaps: true},
+                        // Der Wochenmodell-Wert ist der Durchschnitt der ersten
+                        // sieben Tage: er wird auf jeden dieser Tage gezeichnet,
+                        // damit die rote Linie wie ein 7-Tage-Mittel aussieht.
+                        {label: 'Prognose (Wochenmodell)', data: forecast[3], borderColor: '#ec5146', borderWidth: 2, borderDash: [2, 3], tension: 0, pointRadius: 0},
+                        // Die schwarze Linie des 7-Tage-Mittels endet nicht an
+                        // der letzten Messung: sie läuft in die Prognose hinein
+                        // und übergibt bei der roten Wochenprognose.
+                        {label: 'Prognose 7-Tage-Mittel', data: forecast[4], borderColor: '#222f3e', borderWidth: 1.5, borderDash: [4, 3], tension: .15, pointRadius: 0, fill: false, yAxisID: 'y'},
                         // The measured prices of the forecast days: the history
                         // line continues into the prediction instead of stopping
                         // at the origin, so both can be compared in one view -
                         // drawn in the same green as the history for that reason.
-                        {label: 'Tatsächlich gemessen', data: forecast[4], borderColor: '#38f75c', borderWidth: 2, tension: .15, pointRadius: 3, pointHoverRadius: 4, spanGaps: true, fill: false, yAxisID: 'y'},
+                        {label: 'Tatsächlich gemessen', data: forecast[5], borderColor: '#38f75c', borderWidth: 2, tension: .15, pointRadius: 3, pointHoverRadius: 4, spanGaps: true, fill: false, yAxisID: 'y'},
                     ],
                 },
                 options: {
@@ -1069,14 +1096,16 @@
                         legend: {
                             labels: {
                                 font: {size: 11}, boxWidth: 12,
-                                // the two band edges are one visual element, not two series
-                                filter: (item) => !item.text.startsWith('Band'),
+                                // the two band edges are one visual element - the
+                                // blue cone - and not two series
+                                filter: (item) => !item.text.startsWith('Prognose-Band'),
                             },
                         },
                         // The built-in tooltip would list every series of the day
-                        // in a second box. The hover box next to the grey line
-                        // says the same in one place, so the tooltip is off here
-                        // (the Rhine chart keeps its own tooltip).
+                        // in a second box. The readout above the chart and the
+                        // points on the grey line say the same in one place, so
+                        // the tooltip is off here (the Rhine chart keeps its own
+                        // tooltip).
                         tooltip: {enabled: false},
                     },
                     scales: {
@@ -1197,8 +1226,8 @@
                         {label: 'Basel-Rheinhalle', data: series[0], borderColor: '#066aab', borderWidth: 2, tension: .2, pointRadius: 0},
                         {label: 'Kaub', data: series[1], borderColor: '#ec5146', borderWidth: 2, tension: .2, pointRadius: 0},
                         {label: 'Engstelle (kleinster Pegel)', data: series[2], borderColor: '#222f3e', borderWidth: 2, tension: .2, pointRadius: 0},
-                        {label: `Marke Basel ${rheinThresholds.basel_cm} cm`, data: series[3], borderColor: '#066aab', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
-                        {label: `Marke Kaub ${rheinThresholds.kaub_cm} cm`, data: series[4], borderColor: '#ec5146', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
+                        {label: `Marke Basel ${rheinThresholds.basel_cm} cm`, data: series[3], borderColor: '#066aab', borderWidth: 1, borderDash: [6, 4], pointRadius: 0, hoverMarker: false},
+                        {label: `Marke Kaub ${rheinThresholds.kaub_cm} cm`, data: series[4], borderColor: '#ec5146', borderWidth: 1, borderDash: [6, 4], pointRadius: 0, hoverMarker: false},
                     ],
                 },
                 options: {
@@ -1311,7 +1340,8 @@
         }
 
         /* ------------------------------------------------------------------ *
-         * Forecast form: the only input is the date, and it defaults to today *
+         * Forecast form: the only input is the date. It is written and read  *
+         * as dd.mm.yyyy and defaults to the first day without a measurement. *
          * ------------------------------------------------------------------ */
         // Today in the browser's own calendar: toISOString() would shift the day
         // for everyone in a zone east of UTC.
@@ -1321,22 +1351,50 @@
             return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
         }
 
+        // The field shows "19.10.2026", the API wants "2026-10-19". formatDate()
+        // already prints the German form; this reads it back and refuses dates
+        // that do not exist (31.02. would otherwise roll over into March).
+        function parseGermanDate(text) {
+            const match = String(text || '').trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+            if (!match) return null;
+            const day = Number(match[1]);
+            const month = Number(match[2]);
+            const year = Number(match[3]);
+            const date = new Date(year, month - 1, day);
+            if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+                return null;
+            }
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${year}-${pad(month)}-${pad(day)}`;
+        }
+
+        // The date the form starts with: the first day that has no measurement
+        // yet, i.e. the day after the last measured price - normally tomorrow.
+        // A forecast is a question about the future, never about a day that was
+        // already measured.
+        function defaultForecastDate() {
+            const today = todayISO();
+            const origin = latestMeasuredDate();
+            const next = origin ? addDays(origin, 1) : today;
+            return next > today ? next : today;
+        }
+
         function prefillForm() {
             if (!priceData || !priceData.dates.length) return;
-            let last = priceData.dates.length - 1;
-            while (last > 0 && priceData.price[last] === null) last--;
-            const origin = priceData.dates[last];
+            const origin = latestMeasuredDate() || priceData.dates[priceData.dates.length - 1];
             const today = todayISO();
             const dateInput = document.getElementById('dateInput');
             // The forward model serves horizons 1..90 days from the last measured
-            // day, so the picker must not offer a date the backend would reject.
+            // day, so the field must not offer a date the backend would reject.
             const latest = addDays(origin, 90) > today ? addDays(origin, 90) : addDays(today, 90);
-            dateInput.value = today;
-            dateInput.min = today;
-            dateInput.max = latest;
+            const standard = defaultForecastDate();
+            dateInput.value = formatDate(standard);
+            dateInput.min = formatDate(today);
+            dateInput.max = formatDate(latest);
             document.getElementById('dateHint').textContent =
-                `Standard ist heute; Prognosen bis ${latest} möglich. Ausgangstag des Modells `
-                + `ist der letzte Messwert ${origin} – Preis und Nachfrage kommen aus dem Feature Store.`;
+                `Standard ist ${formatDate(standard)} – der erste Tag ohne Messwert; Prognosen bis `
+                + `${formatDate(latest)} möglich. Ausgangstag des Modells ist der letzte Messwert `
+                + `${formatDate(origin)} – Preis und Nachfrage kommen aus dem Feature Store.`;
         }
 
         document.getElementById('forecastForm').addEventListener('submit', async (e) => {
@@ -1344,10 +1402,16 @@
             const btn = document.getElementById('predictBtn');
             const error = document.getElementById('error');
             error.hidden = true;
+            const isoDate = parseGermanDate(document.getElementById('dateInput').value);
+            if (!isoDate) {
+                error.textContent = 'Datum bitte im Format TT.MM.JJJJ eingeben, zum Beispiel 19.10.2026.';
+                error.hidden = false;
+                return;
+            }
             btn.disabled = true;
             btn.textContent = 'Berechne Prognose …';
             try {
-                const body = {date: document.getElementById('dateInput').value};
+                const body = {date: isoDate};
                 const res = await fetch('/predict', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1367,7 +1431,7 @@
                     : 'Wochenmodell';
                 document.getElementById('resultCard').hidden = false;
                 document.getElementById('resultLabel').textContent =
-                    `Prognose für die Woche nach ${payload.date}`;
+                    `Prognose für die Woche nach ${formatDate(payload.date)}`;
                 document.getElementById('resultPrice').textContent = fmt(prediction);
                 document.getElementById('resultMeta').textContent =
                     `Ausgangstag ${originDate} · ${modelLabel}`;
@@ -1417,18 +1481,20 @@
             }
             const weekly = forecastData.points.find((p) => p.model === 'weekly');
             const last = forecastData.points[forecastData.points.length - 1];
-            const chips = [`<span class="chip">Ausgangstag ${forecastData.origin_date}</span>`];
+            const chips = [`<span class="chip">Ausgangstag ${formatDate(forecastData.origin_date)}</span>`];
             if (weekly) {
-                chips.push(`<span class="chip is-model">Wochenmodell: ${fmt(weekly.value)} CHF in ${weekly.horizon_days} Tagen</span>`);
+                chips.push(`<span class="chip is-model">Wochenmodell: ${fmt(weekly.value)} CHF als `
+                    + `Durchschnitt der ersten ${WEEKLY_FORECAST_DAYS} Tage</span>`);
             }
             chips.push(`<span class="chip is-model">Vorhersagemodell: ${fmt(last.value)} CHF in ${last.horizon_days} Tagen</span>`);
-            chips.push(`<span class="chip">Schwankungsband ±${fmt(last.band)} CHF am letzten Horizont</span>`);
+            chips.push(`<span class="chip">Blauer Kegel: ±${fmt(last.band)} CHF am letzten Horizont `
+                + `(${formatDate(last.date)})</span>`);
             const measured = measuredForecastPoints();
             if (measured.length) {
                 // Once a forecasted week is measured, the difference is shown
                 // right next to the curve instead of being looked up by hand.
                 const signed = (v) => `${v > 0 ? '+' : ''}${fmt(v)}`;
-                const details = measured.map((m) => `${m.date}: ${signed(m.diff)} CHF`).join(' · ');
+                const details = measured.map((m) => `${formatDate(m.date)}: ${signed(m.diff)} CHF`).join(' · ');
                 chips.push(`<span class="chip is-warn">Prognose minus gemessen (${details})</span>`);
             }
             const failed = Object.keys(forecastData.errors || {}).length;
