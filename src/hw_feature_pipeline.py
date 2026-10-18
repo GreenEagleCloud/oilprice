@@ -29,8 +29,15 @@ from hw_config import (
     FEATURE_VIEW_NAME,
     FEATURE_VIEW_VERSION,
     LABELS,
+    MARKET_FEATURES_CSV,
+    MARKET_MODEL_FEATURES,
+    RHEIN_LEVEL_FEATURES_CSV,
+    RHEIN_MODEL_FEATURES,
     TARGET,
+    USE_MARKET_FEATURES,
+    USE_RHEIN_FEATURES,
     login,
+    weekly_model_features,
 )
 
 
@@ -141,8 +148,80 @@ def build_dataset(prices: pd.DataFrame) -> pd.DataFrame:
     return dataset
 
 
+# ---------------------------------------------------------------------------
+# External drivers (Rhine gauge + oil market)
+# ---------------------------------------------------------------------------
+def _read_driver_csv(path, columns: list, label: str) -> pd.DataFrame:
+    """Read the driver feature CSV written by its own pipeline.
+
+    Missing files or missing columns are reported and filled with NULL instead
+    of failing the pipeline: the feature-group schema must stay identical from
+    run to run, otherwise a later run could not upsert into the same group.
+    """
+    frame = pd.DataFrame({"date": pd.to_datetime([])})
+    if not path.exists():
+        print(f"WARNING: {label} driver file missing ({path}) - columns will be NULL")
+    else:
+        df = pd.read_csv(path)
+        if "date" not in df.columns:
+            print(f"WARNING: {label} driver file has no 'date' column - columns will be NULL")
+        else:
+            df["date"] = pd.to_datetime(df["date"])
+            missing = [col for col in columns if col not in df.columns]
+            if missing:
+                print(f"WARNING: {label} driver file lacks {missing} - those columns will be NULL")
+            frame = df
+
+    for col in columns:
+        if col not in frame.columns:
+            frame[col] = np.nan
+    return frame[["date"] + list(columns)].drop_duplicates(subset="date", keep="last")
+
+
+def load_driver_features() -> tuple[pd.DataFrame, list]:
+    """Merge the Rhine gauge and oil-market driver features by date."""
+    frames, columns = [], []
+    for label, path, cols, enabled in (
+        ("Rhine gauge", RHEIN_LEVEL_FEATURES_CSV, RHEIN_MODEL_FEATURES, USE_RHEIN_FEATURES),
+        ("oil market", MARKET_FEATURES_CSV, MARKET_MODEL_FEATURES, USE_MARKET_FEATURES),
+    ):
+        if not enabled:
+            print(f"{label} drivers disabled (OILPRICE_USE_*_FEATURES)")
+            continue
+        frames.append(_read_driver_csv(path, cols, label))
+        columns += list(cols)
+
+    if not frames:
+        return pd.DataFrame(), []
+
+    merged = frames[0]
+    for frame in frames[1:]:
+        merged = merged.merge(frame, on="date", how="outer")
+    return merged, columns
+
+
+def attach_drivers(dataset: pd.DataFrame, drivers: pd.DataFrame, columns: list) -> pd.DataFrame:
+    """LEFT-join the driver features onto the price rows (never drops a row)."""
+    if not columns:
+        return dataset
+
+    out = dataset.merge(drivers, on="date", how="left")
+    for col in columns:
+        if col not in out.columns:
+            out[col] = np.nan
+    # 'date' stays the first column: it is the primary key / event time of the
+    # feature group and must survive the reordering.
+    out = out[["date"] + FEATURES + LABELS + columns]
+
+    coverage = ", ".join(f"{col}={int(out[col].notna().sum())}" for col in columns)
+    print(f"driver features joined: {len(columns)} columns | coverage: {coverage}")
+    return out
+
+
 def main() -> int:
     dataset = build_dataset(load_prices())
+    drivers, driver_columns = load_driver_features()
+    dataset = attach_drivers(dataset, drivers, driver_columns)
 
     # Lokale Kopie (wie im Notebook: data/features/heizoel24_features.csv)
     FEATURES_LOCAL_CSV.parent.mkdir(parents=True, exist_ok=True)
@@ -168,17 +247,23 @@ def main() -> int:
     fg.insert(dataset, wait=True)
     print(f"Feature group '{FEATURE_GROUP_NAME}' v{FEATURE_GROUP_VERSION}: {len(dataset)} rows upserted")
 
-    # Feature View: nur Features + Trainings-Label. Die anderen Labels aus
-    # Notebook 04 bleiben in der Feature Group und können so nicht in das
-    # Training gelangen (kein Label-Leakage).
+    # Feature View: model features + training label. The other labels from
+    # Notebook 04 stay in the feature group so they can never leak into the
+    # training features. The joined driver columns are part of the view.
+    model_features = weekly_model_features()
     fv = fs.get_or_create_feature_view(
         name=FEATURE_VIEW_NAME,
-        query=fg.select(FEATURES + [TARGET]),
+        query=fg.select(model_features + [TARGET]),
         version=FEATURE_VIEW_VERSION,
-        description="Weekly oil-price prediction: 12 features + target_next_week_price",
+        description=(
+            "Weekly oil-price prediction: 12 price/demand features + "
+            f"{len(model_features) - len(FEATURES)} Rhine/market driver features "
+            "+ target_next_week_price"
+        ),
         labels=[TARGET],
     )
-    print(f"Feature view '{FEATURE_VIEW_NAME}' v{FEATURE_VIEW_VERSION} ready")
+    print(f"Feature view '{FEATURE_VIEW_NAME}' v{FEATURE_VIEW_VERSION} ready "
+          f"({len(model_features)} features)")
     return 0
 
 

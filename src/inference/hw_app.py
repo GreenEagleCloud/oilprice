@@ -55,6 +55,7 @@ from hw_config import (  # noqa: E402
     RT_FEATURES,
     login,
 )
+from model_artifact import read_model_features  # noqa: E402
 
 app = Flask(__name__)
 
@@ -63,6 +64,8 @@ _fv = None
 _codes = None
 _forward_model = None
 _forward_fv = None
+_model_features = None
+_forward_model_features = None
 
 
 def _category_codes() -> dict:
@@ -115,6 +118,21 @@ def _encode_vector(vector: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
+def _select_model_features(vector: pd.DataFrame, features: list | None) -> pd.DataFrame:
+    """Select exactly the columns the registered model was trained on.
+
+    The feature views gained the Rhine/market driver columns in v2, so the
+    column set of a view is not a stable contract - the model artifact carries
+    its own feature list (src/model_artifact.py) and that list wins here.
+    """
+    if not features:
+        return vector
+    missing = [name for name in features if name not in vector.columns]
+    if missing:
+        raise ValueError(f"feature vector lacks features the model was trained on: {missing}")
+    return vector[list(features)]
+
+
 def _get_fv():
     """Feature view from the Hopsworks Feature Store (lazy, once per process)."""
     global _fv
@@ -142,7 +160,7 @@ def _default_date() -> str:
 
 def _load_model():
     """Model from the Hopsworks Model Registry (latest version), S3 fallback."""
-    global _model
+    global _model, _model_features
     if _model is not None:
         return _model
 
@@ -155,7 +173,11 @@ def _load_model():
             latest = max(models, key=lambda m: m.version)
             folder = latest.download()
             _model = joblib.load(os.path.join(folder, MODEL_FILE_NAME))
-            print(f"Model '{MODEL_NAME}' v{latest.version} loaded from the Hopsworks Model Registry")
+            _model_features = read_model_features(folder)
+            print(
+                f"Model '{MODEL_NAME}' v{latest.version} loaded from the Hopsworks Model Registry"
+                + (f" ({len(_model_features)} features)" if _model_features else "")
+            )
             return _model
         print(f"No model '{MODEL_NAME}' in the Model Registry, falling back to S3")
     except Exception as e:
@@ -241,7 +263,7 @@ def _get_forward_fv():
 
 def _load_forward_model():
     """Forward model from the Hopsworks Model Registry, S3 fallback."""
-    global _forward_model
+    global _forward_model, _forward_model_features
     if _forward_model is not None:
         return _forward_model
 
@@ -253,9 +275,11 @@ def _load_forward_model():
             latest = max(models, key=lambda m: m.version)
             folder = latest.download()
             _forward_model = joblib.load(os.path.join(folder, FORWARD_MODEL_FILE_NAME))
+            _forward_model_features = read_model_features(folder)
             print(
                 f"Model '{FORWARD_MODEL_NAME}' v{latest.version} loaded "
                 "from the Hopsworks Model Registry"
+                + (f" ({len(_forward_model_features)} features)" if _forward_model_features else "")
             )
             return _forward_model
         print(f"No model '{FORWARD_MODEL_NAME}' in the Model Registry, falling back to S3")
@@ -396,7 +420,7 @@ def _predict_forward(entry_date: pd.Timestamp, passed_features: dict):
         }
 
     model = _load_forward_model()
-    X = vector[FORWARD_FEATURES]
+    X = _select_model_features(vector, _forward_model_features or FORWARD_FEATURES)
     prediction = float(model.predict(_encode_vector(X))[0])
     result = {
         "date": entry_date.strftime("%Y-%m-%d"),
@@ -478,7 +502,8 @@ def predict():
         # 3) prediction with the model from the Model Registry (or S3 fallback)
         #    (non-numeric features are integer-coded exactly as in training)
         model = _load_model()
-        prediction = float(model.predict(_encode_vector(vector))[0])
+        X = _select_model_features(vector, _model_features)
+        prediction = float(model.predict(_encode_vector(X))[0])
     except Exception as e:
         forward_result, forward_error = _predict_forward(entry_date, passed_features)
         if forward_result is not None:

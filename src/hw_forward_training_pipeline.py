@@ -47,8 +47,10 @@ from hw_config import (
     MODEL_BUCKET,
     RANDOM_STATE,
     TEST_SIZE,
+    forward_model_features,
     login,
 )
+from model_artifact import write_model_features
 from training_pipeline import get_s3_options
 
 
@@ -98,7 +100,7 @@ def build_forward_model(X_train: pd.DataFrame):
     )
 
 
-def register_forward_model(project, model, mse: float):
+def register_forward_model(project, model, mse: float, features: list | None = None):
     """Register the forward model in the Hopsworks Model Registry."""
     registry = project.get_model_registry()
 
@@ -106,6 +108,8 @@ def register_forward_model(project, model, mse: float):
         model_dir = Path(tmp) / FORWARD_MODEL_NAME
         model_dir.mkdir()
         joblib.dump(model, model_dir / FORWARD_MODEL_FILE_NAME)
+        if features:
+            write_model_features(model_dir, FORWARD_MODEL_NAME, features)
 
         reg_model = Model(
             id=None,
@@ -153,8 +157,18 @@ def main() -> int:
         if missing_features:
             raise ValueError(f"Forward feature view is missing features: {missing_features}")
 
-        X_train = X_train[FORWARD_FEATURES]
-        X_test = X_test[FORWARD_FEATURES]
+        # Driver columns are optional: a forward view created before the Rhine /
+        # market join simply lacks them, and the model is then trained without.
+        wanted = forward_model_features()
+        missing_drivers = [col for col in wanted if col not in X_train.columns]
+        if missing_drivers:
+            print(f"WARNING: forward feature view lacks driver features: {missing_drivers}")
+        model_features = [col for col in wanted if col in X_train.columns]
+        driver_features = [col for col in model_features if col not in FORWARD_FEATURES]
+
+        X_train = X_train[model_features]
+        X_test = X_test[model_features]
+        print(f"driver features used: {len(driver_features)} ({', '.join(driver_features)})")
 
         n_total = len(y_train) + len(y_test)
         X_train, y_train = _drop_unlabeled(X_train, y_train)
@@ -186,9 +200,11 @@ def main() -> int:
             mlflow.log_param("max_features", FORWARD_MAX_FEATURES)
             mlflow.log_param("test_size", TEST_SIZE)
             mlflow.log_param("random_state", RANDOM_STATE)
+            mlflow.log_param("n_features", len(model_features))
+            mlflow.log_param("driver_features", ",".join(driver_features) or "none")
             mlflow.log_metric("mse", mse)
 
-        registered = register_forward_model(project, model, mse)
+        registered = register_forward_model(project, model, mse, model_features)
         print(
             f"Registered '{FORWARD_MODEL_NAME}' "
             f"(version {registered.version}) in the Hopsworks Model Registry"

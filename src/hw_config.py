@@ -24,6 +24,21 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from market_config import FEATURES_LOCAL_CSV as MARKET_FEATURES_CSV
+from market_config import (
+    MARKET_FEATURES,
+    MARKET_FEATURE_GROUP,
+    MARKET_FEATURE_GROUP_VERSION,
+    MARKET_FEATURE_VIEW,
+    MARKET_FEATURE_VIEW_VERSION,
+)
+from rhein_config import (
+    RHEIN_LEVEL_FEATURES,
+    RHEIN_LEVEL_FEATURE_VIEW,
+    RHEIN_LEVEL_FEATURE_VIEW_VERSION,
+    RHEIN_LEVEL_FEATURES_CSV,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / ".env")
 
@@ -34,14 +49,18 @@ DATA_FILE = REPO_ROOT / "data" / "heizoel24_heizoel_daily_ch_full.csv"
 FEATURES_LOCAL_CSV = REPO_ROOT / "data" / "features" / "heizoel24_features.csv"
 
 FEATURE_GROUP_NAME = "heizoel24"
-FEATURE_GROUP_VERSION = 1
+# v2 = v1 columns + the joined Rhine/market driver columns. v1 (price features
+# only) is kept so the previously served model stays reproducible.
+FEATURE_GROUP_VERSION = 2
 FEATURE_VIEW_NAME = "heizoel24_weekly"
-FEATURE_VIEW_VERSION = 1
+# v2 = v1 features + the Rhine gauge and oil-market joins (see below). v1 is
+# kept untouched so the model that is currently served stays reproducible.
+FEATURE_VIEW_VERSION = 2
 
 FORWARD_FEATURE_GROUP_NAME = "heizoel24_forward"
-FORWARD_FEATURE_GROUP_VERSION = 1
+FORWARD_FEATURE_GROUP_VERSION = 2
 FORWARD_FEATURE_VIEW_NAME = "heizoel24_forward_forecast"
-FORWARD_FEATURE_VIEW_VERSION = 1
+FORWARD_FEATURE_VIEW_VERSION = 2
 
 MODEL_NAME = "oil_price_model"
 MODEL_FILE_NAME = "oil_price_model.pkl"  # joblib file inside the registry model folder
@@ -59,6 +78,82 @@ AGG_FEATURES = [
 ]
 RT_FEATURES = ["current_price", "current_demand"]
 FEATURES = AGG_FEATURES + RT_FEATURES
+
+# ---------------------------------------------------------------------------
+# External drivers joined into the training feature views
+# ---------------------------------------------------------------------------
+# Rhine gauge (src/hw_rhein_feature_pipeline.py) and oil market (src/
+# hw_oil_market_feature_pipeline.py) features are LEFT-joined onto the price
+# rows by date, so a price row is never dropped when a driver is missing
+# (Rhine starts 2020-06-22, the market series start 2003/2007).
+#
+# Only a compact, datum-consistent subset of the 15 gauge features is used:
+#   basel_level_cm             daily minimum at Basel-Rheinhalle (shipping day)
+#   basel_level_min_7d         worst level of the shipping week
+#   basel_level_zscore_30d     how unusual the current level is
+#   basel_low_days_30d         duration of the low-water phase
+#   basel_level_trend_7d       is the situation easing or tightening
+#   rhein_low_water_flag       binary alert (each station vs its own threshold)
+#
+# bottleneck_level_cm / _min_7d are deliberately NOT model features: Basel and
+# Kaub heights are measured against different gauge datums (Basel ~470 cm while
+# Kaub runs from about -6 cm to 30 cm), so min(Basel, Kaub) is not a comparable
+# depth - it would make the feature jump by two orders of magnitude the day Kaub
+# coverage starts. The columns stay in the feature group for the /rhein snapshot.
+#
+# The per-station Kaub columns are not used either: WSV publishes Kaub only for
+# the last ~30 days, so they would be NULL for almost the whole training history
+# (raw/rhein_kaub_raw.csv accumulates the history for future model versions).
+RHEIN_MODEL_FEATURES = [
+    "basel_level_cm",
+    "basel_level_min_7d",
+    "basel_level_zscore_30d",
+    "basel_low_days_30d",
+    "basel_level_trend_7d",
+    "rhein_low_water_flag",
+]
+
+# Market drivers (ICE Gasoil USD/t, USD/CHF and the derived CHF/100l reference
+# price). gasoil_chf_tonne is the exact product of the other two columns and is
+# therefore left out; the 7-day mean/change carry the momentum.
+MARKET_MODEL_FEATURES = [
+    "market_price_chf_100l",
+    "market_price_chf_100l_mean_7d",
+    "market_price_chf_100l_chg_7d_pct",
+    "gasoil_usd_tonne",
+    "usd_chf",
+]
+
+
+def _flag(name: str) -> bool:
+    return os.getenv(name, "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+# Both joins can be switched off per environment variable, e.g. to retrain the
+# baseline model for an A/B comparison without redeploying.
+USE_RHEIN_FEATURES = _flag("OILPRICE_USE_RHEIN_FEATURES")
+USE_MARKET_FEATURES = _flag("OILPRICE_USE_MARKET_FEATURES")
+
+
+def weekly_model_features() -> list:
+    """Feature columns of the weekly view (price features + enabled drivers)."""
+    columns = list(FEATURES)
+    if USE_RHEIN_FEATURES:
+        columns += RHEIN_MODEL_FEATURES
+    if USE_MARKET_FEATURES:
+        columns += MARKET_MODEL_FEATURES
+    return columns
+
+
+def forward_model_features() -> list:
+    """Feature columns of the forward view (origin features + enabled drivers)."""
+    columns = list(FORWARD_FEATURES)
+    if USE_RHEIN_FEATURES:
+        columns += FORWARD_RHEIN_FEATURES
+    if USE_MARKET_FEATURES:
+        columns += FORWARD_MARKET_FEATURES
+    return columns
+
 
 # Notebook-04 labels. Only TARGET is used for training; the others stay in the
 # feature group (documentation/analysis) but are NOT selected by the feature
@@ -95,6 +190,12 @@ FORWARD_FEATURES = [
     "target_seasonal_index",
     "forecast_horizon_days",
 ]
+
+# Driver features of the origin date (same values as the weekly view, but named
+# with the origin_ prefix because a forward row is keyed by target_date +
+# origin_date and every driver must be known at origin_date).
+FORWARD_RHEIN_FEATURES = [f"origin_{name}" for name in RHEIN_MODEL_FEATURES]
+FORWARD_MARKET_FEATURES = [f"origin_{name}" for name in MARKET_MODEL_FEATURES]
 
 FORWARD_TARGET = "target_price_week_after_target_date"
 

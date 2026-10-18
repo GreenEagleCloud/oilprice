@@ -8,15 +8,18 @@ spec:
   schedule: "30 23 * * *"
   jobTemplate:
     spec:
+      # bounds a stuck upstream request (Yahoo/ECB/FRED) - the collector itself
+      # has no hard timeout because yfinance must run in the main thread
+      activeDeadlineSeconds: 1800
       template:
         spec:
           imagePullSecrets:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: collect-daily-prices
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.6
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.7
             imagePullPolicy: Always
-            command: ["python", "src/collect_daily_prices.py"]
+            command: ["sh", "-c", "python src/collect_daily_prices.py && python src/collect_oil_market_prices.py"]
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:

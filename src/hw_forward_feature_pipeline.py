@@ -45,10 +45,19 @@ from hw_config import (
     FORWARD_FEATURES,
     FORWARD_FEATURE_VIEW_NAME,
     FORWARD_FEATURE_VIEW_VERSION,
+    FORWARD_MARKET_FEATURES,
+    FORWARD_RHEIN_FEATURES,
     FORWARD_SERVING_HORIZONS,
     FORWARD_TRAINING_HORIZONS,
     FORWARD_PRIMARY_KEYS,
     FORWARD_TARGET,
+    MARKET_FEATURES_CSV,
+    MARKET_MODEL_FEATURES,
+    RHEIN_LEVEL_FEATURES_CSV,
+    RHEIN_MODEL_FEATURES,
+    USE_MARKET_FEATURES,
+    USE_RHEIN_FEATURES,
+    forward_model_features,
     login,
 )
 
@@ -122,7 +131,60 @@ def _full_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
     return s.reset_index()
 
 
-def _origin_features(df: pd.DataFrame) -> pd.DataFrame:
+def _driver_frames() -> tuple[pd.DataFrame, list]:
+    """Load the Rhine gauge / market driver features (written by their pipelines).
+
+    Missing files are reported and filled with NULL: a forward row must still be
+    created when a driver is unavailable, the model then sees a missing value.
+    """
+    frames, columns = [], []
+    for label, path, cols, enabled in (
+        ("Rhine gauge", RHEIN_LEVEL_FEATURES_CSV, RHEIN_MODEL_FEATURES, USE_RHEIN_FEATURES),
+        ("oil market", MARKET_FEATURES_CSV, MARKET_MODEL_FEATURES, USE_MARKET_FEATURES),
+    ):
+        if not enabled:
+            continue
+        if path.exists():
+            frame = pd.read_csv(path)
+            frame["date"] = pd.to_datetime(frame["date"])
+            missing = [col for col in cols if col not in frame.columns]
+            if missing:
+                print(f"WARNING: {label} driver file lacks {missing} - those columns will be NULL")
+        else:
+            print(f"WARNING: {label} driver file missing ({path}) - columns will be NULL")
+            frame = pd.DataFrame({"date": pd.to_datetime([])})
+        for col in cols:
+            if col not in frame.columns:
+                frame[col] = np.nan
+        frames.append(frame[["date"] + list(cols)].drop_duplicates(subset="date", keep="last"))
+        columns += list(cols)
+
+    if not frames:
+        return pd.DataFrame(), []
+    merged = frames[0]
+    for frame in frames[1:]:
+        merged = merged.merge(frame, on="date", how="outer")
+    return merged, columns
+
+
+def _attach_driver_columns(daily: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    """Merge the driver features onto the daily calendar and carry them forward.
+
+    The market series only exist on trading days, so a weekend/Sunday price day
+    must still carry Friday's market level. ffill(limit=3) bounds that carry to
+    a normal weekend gap instead of inventing values across a data outage.
+    """
+    drivers, columns = _driver_frames()
+    if not columns:
+        return daily, []
+
+    out = daily.merge(drivers, on="date", how="left")
+    for col in columns:
+        out[col] = out[col].ffill(limit=3)
+    return out, columns
+
+
+def _origin_features(df: pd.DataFrame, driver_cols: tuple = ()) -> pd.DataFrame:
     """Aggregate features known at each origin date."""
     out = df.copy()
     out = out.set_index("date")
@@ -139,6 +201,11 @@ def _origin_features(df: pd.DataFrame) -> pd.DataFrame:
     ) / 4
     out["origin_current_price"] = price
     out["origin_current_demand"] = demand
+
+    # Driver features (Rhine gauge + oil market) are already point-in-time
+    # values of the origin date, so they are only renamed with the origin_ prefix.
+    for col in driver_cols:
+        out[f"origin_{col}"] = out[col]
 
     return out.reset_index()
 
@@ -165,7 +232,8 @@ def build_forward_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     max_date = df["date"].max()
     daily = _full_daily_frame(df)
-    origin = _origin_features(daily)
+    daily, driver_cols = _attach_driver_columns(daily)
+    origin = _origin_features(daily, driver_cols)
     seasonal_idx = _seasonal_index(daily)
     seasonal_map = {int(k): round(float(v), 4) for k, v in seasonal_idx.items()}
 
@@ -178,6 +246,11 @@ def build_forward_features(df: pd.DataFrame) -> pd.DataFrame:
         "origin_current_price",
         "origin_current_demand",
     ]
+    # Driver columns are copied too, but they are NOT part of the completeness
+    # filter below: the Rhine series starts 2020 and the market series only on
+    # trading days, so requiring them would delete most historical origins.
+    driver_origin_cols = [f"origin_{col}" for col in driver_cols]
+    copy_cols = origin_feature_cols + driver_origin_cols
 
     origin = origin.loc[origin[origin_feature_cols].notna().all(axis=1)].copy()
     if origin.empty:
@@ -207,7 +280,7 @@ def build_forward_features(df: pd.DataFrame) -> pd.DataFrame:
                 "forecast_horizon_days": int(horizon),
             }
         )
-        for col in origin_feature_cols:
+        for col in copy_cols:
             frame[col] = origin.loc[valid, col].to_numpy()
 
         calendar = _target_calendar_frame(target_dates.loc[valid], seasonal_map)
@@ -230,7 +303,7 @@ def build_forward_features(df: pd.DataFrame) -> pd.DataFrame:
                 "forecast_horizon_days": FORWARD_SERVING_HORIZONS,
             }
         )
-        for col in origin_feature_cols:
+        for col in copy_cols:
             frame[col] = latest_origin.iloc[0][col]
 
         calendar = _target_calendar_frame(target_dates, seasonal_map)
@@ -296,9 +369,9 @@ def create_forward_feature_view(fg: feature_group.FeatureGroup):
     fv = fs.get_or_create_feature_view(
         name=FORWARD_FEATURE_VIEW_NAME,
         version=FORWARD_FEATURE_VIEW_VERSION,
-        query=fg.select(FORWARD_FEATURES + [FORWARD_TARGET]),
+        query=fg.select(forward_model_features() + [FORWARD_TARGET]),
         labels=[FORWARD_TARGET],
-        description="Forward oil-price forecast: origin-date features + forecast_horizon_days -> target week after target_date",
+        description="Forward oil-price forecast: origin-date features (price/demand + Rhine/market drivers) + forecast_horizon_days -> target week after target_date",
     )
     print(
         f"Created feature view '{FORWARD_FEATURE_VIEW_NAME}' "

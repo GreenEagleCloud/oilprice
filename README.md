@@ -39,15 +39,20 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 
 ### Hopsworks-Flow (TODO Punkte 6–8)
 * `hw_config.py` – gemeinsame Konfiguration (Names, Features, `.env`) + `login()`
-* `hw_feature_pipeline.py` – Feature Group `heizoel24` (online-enabled) + Feature View `heizoel24_weekly`
-* `hw_forward_feature_pipeline.py` – Feature Group `heizoel24_forward` + Feature View `heizoel24_forward_forecast` für zukünftige Zieltermine; Primary Keys sind `target_date` + `origin_date`, `forecast_horizon_days` ist ein Modell-Feature
+* `hw_feature_pipeline.py` – Feature Group `heizoel24` (online-enabled) + Feature View `heizoel24_weekly`; joined zusätzlich die Rhein- und Markt-Treiber (v2)
+* `hw_forward_feature_pipeline.py` – Feature Group `heizoel24_forward` + Feature View `heizoel24_forward_forecast` für zukünftige Zieltermine; Primary Keys sind `target_date` + `origin_date`, `forecast_horizon_days` ist ein Modell-Feature; Treiber werden als `origin_*`-Spalten geführt
 * `hw_training_pipeline.py` – Training aus der wöchentlichen Feature View → MLflow + Hopsworks Model Registry (+ S3-Export)
 * `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View → MLflow + Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export)
+* `model_artifact.py` – schreibt `model_features.json` ins Modell-Artefact, damit die Inferenz exakt die trainierten Spalten verwendet
 * `inference/hw_app.py` – Flask-App: zuerst wöchentlicher Feature Vector; bei fehlendem/futurischem Datum Fallback auf Forward-Feature-View und `oil_price_forward_model`
 * `rhein_config.py` – Stationen, Quellen, Schwellen und Feature-Listen für die Rhein-Daten
 * `collect_rhein_levels.py` – Pegel Basel + Kaub (data.bs.ch, WSV, BAFU/LINDAS) → `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`
+* `collect_rhein_kaub_history.py` – append-only Archiv der Kaub-Rohmesswerte (`raw/rhein_kaub_raw.csv`), weil WSV nur ~30 Tage liefert
 * `collect_rhein_cargo.py` – Monats-Bulletins der Port of Switzerland (PDF) → `raw/rhein_cargo.csv`
 * `hw_rhein_feature_pipeline.py` – Feature Groups `rhein_level` (täglich, online-enabled) und `rhein_cargo` (monatlich) + Feature Views
+* `market_config.py` – Symbole, Quellen und Einheitenumrechnung (USD/t → CHF/100l)
+* `collect_oil_market_prices.py` – ICE Gasoil (bzw. Brent-Proxy) und USD/CHF → `raw/oil_market_prices.csv`
+* `hw_oil_market_feature_pipeline.py` – Feature Group `oil_market` (online-enabled) + Feature View `oil_market_daily`
 
 ## Rhein-Features (Pegel + Fracht)
 
@@ -56,6 +61,15 @@ fährt, muss alle Pegel der Strecke passieren; die Ladung richtet sich nach dem
 **niedrigsten** Pegel unterwegs. Die Mittelrhein-Engstelle Kaub (Rhein-km 546)
 ist praktisch immer der limitierende Punkt, deshalb wird
 `bottleneck_level_cm = min(basel_level_cm, kaub_level_cm)` gebildet.
+
+> [!WARNING]
+> `bottleneck_level_cm` ist eine **Dashboard-Grösse, kein Modell-Feature**: Basel
+> und Kaub haben unterschiedliche Pegelbezugspunkte (Basel ~470 cm, Kaub läuft
+> aktuell von etwa −6 cm bis 30 cm). Ein `min()` über beide Stationen ist daher
+> keine vergleichbare Tiefgangsangabe und würde den Feature-Wert um zwei
+> Grössenordnungen springen lassen, sobald Kaub-Abdeckung beginnt. Für das
+> Training werden ausschliesslich pegel-konsistente Basel-Features und
+> `rhein_low_water_flag` verwendet (jede Station gegen ihren eigenen Schwellwert).
 
 | Quelle | Inhalt | Abdeckung |
 | --- | --- | --- |
@@ -83,9 +97,13 @@ ist praktisch immer der limitierende Punkt, deshalb wird
   (≥ 49 Tage) auf die Preis-Tabelle joinen — nie als „heutigen“ Wert.
 * Für die **Inferenz** ist nur der Pegel ein Echtzeit-Feature (`raw/rhein_snapshot.json`
   → `passed_features`); die Fracht-Features sind ausschliesslich Historie.
-* Kaub ist historisch nicht verfügbar (WSV liefert nur ~30 Tage). Der CronJob
-  `collect-rhein` sammelt Kaub täglich weiter an, sodass die Historie mit der
-  Zeit wächst; bis dahin fällt `bottleneck_level_cm` auf Basel zurück (Obergrenze).
+* Kaub ist historisch nicht verfügbar (WSV liefert nur ~30 Tage; verifiziert
+  2026-10-18: `start=2020-01-01` wird auf die letzten 30 Tage geklemmt, ältere
+  Fenster liefern `[]`). `src/collect_rhein_kaub_history.py` sammelt deshalb
+  jeden Tag das verfügbare Fenster in `raw/rhein_kaub_raw.csv` (append-only,
+  Dedup über den Zeitstempel) und aggregiert es nach `raw/rhein_levels.csv`.
+  Damit wächst die Kaub-Historie mit jedem Lauf – nach einigen Monaten ist sie
+  länger als das WSV-Fenster, und `--rebuild` kann sie jederzeit neu aggregieren.
 * Bulletins werden in der Punkt-in-Time-Sicht nicht revidiert: bei Duplikaten
   gewinnt die zuerst publizierte Ausgabe (`merge_cargo`). Bereits abgerufene
   PDFs werden in `raw/rhein_bulletins_parsed.json` gemerkt; `--all` baut den
@@ -97,6 +115,134 @@ ist praktisch immer der limitierende Punkt, deshalb wird
 ```bash
 python -m pytest tests/ -q
 ```
+
+
+## Markt-Treiber (ICE Gasoil + USD/CHF)
+
+Der Einkaufspreis von Heizöl in der Schweiz wird von zwei Grössen bestimmt, die
+nichts mit dem Schweizer Tagespreis zu tun haben: dem Produktpreis an der ICE
+(USD pro Tonne) und dem Wechselkurs USD/CHF. Beide werden als eigene Feature
+Group geführt:
+
+```text
+gasoil_chf_tonne      = gasoil_usd_tonne × usd_chf
+market_price_chf_100l = gasoil_chf_tonne / 11.8343
+```
+
+`11.8343` kommt aus der Dichte von Heizöl extra leicht (0.845 kg/l):
+1 t = 1000 kg / 0.845 kg/l = 1183.43 l = 11.8343 Einheiten à 100 l. Damit steht
+der Markttreiber in derselben Einheit wie das Trainingslabel (CHF/100 l).
+
+| Quelle | Inhalt | Hinweis |
+| --- | --- | --- |
+| Yahoo Finance `USDCHF=X` | USD/CHF Schlusskurs, täglich seit 2003-09-17 | Primärquelle |
+| ECB `eurofxref-hist.csv` / `eurofxref-daily.xml` | EUR/USD und EUR/CHF → `usd_chf = EURCHF / EURUSD` | Fallback, seit 1999 |
+| Yahoo Finance `BZ=F` | Brent USD/barrel → USD/t mit 7.4433 bbl/t | Brent-Proxy für Gasoil |
+| FRED `DCOILBRENTEU` | Brent USD/barrel, täglich seit 1987 | Fallback, Antwort in <1 s |
+
+> [!IMPORTANT]
+> **ICE Gasoil ist bei Yahoo nicht mehr verfügbar.** `LGO=F` liefert für jeden
+> Zeitraum 0 Zeilen (`quoteSummary 404, "possibly delisted"`); auch `GSO=F`,
+> `GSOIL=F`, `DIESEL=F` existieren nicht. Der Collector nutzt deshalb standardmässig
+> den **Brent-Proxy** und markiert das in der Spalte `gasoil_source`
+> (`brent_proxy:fred:DCOILBRENTEU`). Sobald ein lizenzierter ICE-Feed existiert,
+> genügt `OILPRICE_GASOIL_SYMBOL=<yahoo-symbol>`, um wieder direkt in USD/t zu
+> gehen. Brent und Gasoil sind eng verwandt, aber nicht identisch – die Proxy-Qualität
+> ist im Feature Group-Schema auditierbar.
+>
+> FRED hat **keine** USD/CHF-Serie (`DEXCHUS` ist CNY/USD), deshalb ist der
+> Währungs-Fallback die ECB.
+
+**Feature Group `oil_market`** – Primary Key `date`, Event Time `date`,
+online-enabled. Spalten: `gasoil_usd_tonne`, `usd_chf`, `gasoil_chf_tonne`,
+`market_price_chf_100l`, `market_price_chf_100l_mean_7d`,
+`market_price_chf_100l_chg_7d_pct` plus die Quellen-Spalten `gasoil_source` /
+`fx_source` (nicht im Modell).
+
+**Point-in-Time:** Jede Zeile von Tag `t` ist am Schluss von `t` publiziert und
+darf `t` und spätere Tage erklären, nie frühere. Die 7-Tage-Fenster schauen nur
+zurück.
+
+**Lauf:**
+
+```bash
+python src/collect_oil_market_prices.py            # 10y-Fenster, Upsert per Datum
+python src/collect_oil_market_prices.py --period max --no-s3
+python src/hw_oil_market_feature_pipeline.py       # Feature Group + View
+python src/hw_oil_market_feature_pipeline.py --local-only
+```
+
+Yahoo drosselt bei grossen oder wiederholten Anfragen (`429`, yfinance meldet das
+als *leere* Antwort). Der Collector probiert dreimal mit Backoff und fällt dann
+auf ECB/FRED zurück; `merge_raw()` upsertet per Datum, die Historie wächst also
+über die täglichen Läufe trotzdem vollständig.
+
+
+## Training mit Rhein- und Markt-Treibern
+
+Beide Trainings-Pipelines arbeiten auf **Version 2** der Feature Views; v1 bleibt
+unverändert erhalten, damit das zuvor registrierte Modell reproduzierbar bleibt.
+
+| Objekt | v1 | v2 |
+| --- | --- | --- |
+| Feature Group | `heizoel24` v1 (nur Preis/Demand) | `heizoel24` v2 (+ 11 Treiber-Spalten) |
+| Feature View | `heizoel24_weekly` v1 | `heizoel24_weekly` v2 |
+| Feature Group | `heizoel24_forward` v1 | `heizoel24_forward` v2 (+ `origin_*`-Treiber) |
+| Feature View | `heizoel24_forward_forecast` v1 | `heizoel24_forward_forecast` v2 |
+
+**Join:** `src/hw_feature_pipeline.py` liest die Feature-CSVs der Treiber-Pipelines
+(`data/features/rhein_level_features.csv`, `data/features/oil_market_features.csv`)
+und joined sie per **LEFT JOIN auf `date`** in die Preiszeilen – eine Preiszeile
+geht also nie verloren, wenn ein Treiber fehlt (Rhein beginnt 2020-06-22, der
+Markt je nach Quelle 1999/2003/2007). Im Forward-Pipeline sind dieselben Werte
+unter `origin_*` abgelegt, weil eine Forward-Zeile nach `target_date` +
+`origin_date` keyed ist und jeder Treiber zum `origin_date` bekannt sein muss.
+
+**Modell-Features (`hw_config.py`):**
+
+```python
+RHEIN_MODEL_FEATURES = ["basel_level_cm", "basel_level_min_7d",
+                        "basel_level_zscore_30d", "basel_low_days_30d",
+                        "basel_level_trend_7d", "rhein_low_water_flag"]
+MARKET_MODEL_FEATURES = ["market_price_chf_100l", "market_price_chf_100l_mean_7d",
+                         "market_price_chf_100l_chg_7d_pct", "gasoil_usd_tonne",
+                         "usd_chf"]
+```
+
+`gasoil_chf_tonne` ist das exakte Produkt aus `gasoil_usd_tonne × usd_chf` und
+wird deshalb nicht zusätzlich ins Modell genommen (es bringt Information, aber
+keine neue Information). Die Fracht-Features (`rhein_cargo`) sind **noch nicht**
+dabei: sie haben einen Publikationsverzug von 4–7 Wochen und brauchen einen
+Lag-Join (≥ 49 Tage), der fachlich abgestützt werden muss.
+
+**Erster Abgleich (2026-10-18, Zeit-Split 80/20 über 2020-06-22 … 2026-10-02,
+459 Testtage, RandomForest wie in Produktion):**
+
+| Feature-Set | MSE | MAE |
+| --- | --- | --- |
+| Baseline (12 Preis/Demand) | 32.63 | 4.06 |
+| + Rhein (18) | 31.32 | 3.75 |
+| + Markt (17) | 33.29 | 4.07 |
+| Rhein + Markt (23) | **30.96** | **3.75** |
+
+Die Pegel-Features verbessern den Ausblick deutlich (MAE −0.31 CHF/100 l ≈ −7.7 %).
+Der Markt-Block ist in diesem Lauf **noch nicht belastbar**: in der gebrauchten
+Umgebung war die ECB-Historie veraltet (USD/CHF nur bis 2010-02 + ein aktueller
+Tag), deshalb sind die Markt-Spalten im Testzeitraum 2025/2026 fast ausschliesslich
+NULL. Mit aktuellem ECB/Yahoo-Stand (Cluster) wird dieser Block erst sinnvoll
+messbar – die Pipeline ist so gebaut, dass er dann automatisch vollständig gefüllt
+wird. Der Vergleich ist reproduzierbar:
+
+```bash
+OILPRICE_USE_RHEIN_FEATURES=0 OILPRICE_USE_MARKET_FEATURES=0 \
+  python src/hw_training_pipeline.py     # reines Preis-Basismodell
+```
+
+**Modell-Artefact:** Beide Trainings-Pipelines schreiben `model_features.json`
+neben die Pickle ins Registry-Modell (`src/model_artifact.py`). `hw_app.py` liest
+diese Liste nach `model.download()` und übergibt exakt diese Spalten – so kann
+ein Modell, das vor einem Feature-View-Wechsel registriert wurde, nicht mit den
+falschen Spalten gefüttert werden.
 
 
 ## Hopsworks-Setup
@@ -301,8 +447,8 @@ Aktuelle Images:
 
 ```text
 ghcr.io/greeneaglecloud/oilprice-frontend:1.4
-ghcr.io/greeneaglecloud/oilprice-inference:1.4
-ghcr.io/greeneaglecloud/oilprice-pipelines:1.6
+ghcr.io/greeneaglecloud/oilprice-inference:1.5
+ghcr.io/greeneaglecloud/oilprice-pipelines:1.7
 ```
 
 Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
@@ -339,6 +485,38 @@ aktuellen `origin_date` aus dem S3-Rohdatensatz aktualisiert werden:
 ```bash
 kubectl -n oilprice create job "feature-pipeline-manual-$(date +%Y%m%d%H%M%S)" \
   --from=cronjob/feature-pipeline
+```
+
+Sammler sofort auslösen (Preise + Markt, Pegel + Fracht + Kaub-Archiv):
+
+```bash
+kubectl -n oilprice create job "collect-daily-manual-$(date +%Y%m%d%H%M%S)" \
+  --from=cronjob/collect-daily-prices
+kubectl -n oilprice create job "collect-rhein-manual-$(date +%Y%m%d%H%M%S)" \
+  --from=cronjob/collect-rhein
+```
+
+Erwartete Zeilen aus dem Feature-Lauf (Reihenfolge: Rhein → Markt → weekly → forward):
+
+```text
+rhein_level: 2310 rows 2020-06-22 .. 2026-10-18, Kaub covered for 33 days
+oil_market: 2841 rows 1998-12-24 .. 2026-10-16, sources gasoil=brent_proxy:fred:DCOILBRENTEU fx=ecb:eurofxref
+driver features joined: 11 columns | coverage: basel_level_cm=2301, ... market_price_chf_100l=...
+Feature group 'heizoel24' v2: 8650 rows upserted
+Feature view 'heizoel24_weekly' v2 ready (23 features)
+Feature group 'heizoel24_forward' v2: 370491 rows upserted
+```
+
+Training mit den Treibern (registriert eine neue Modellversion inkl.
+`model_features.json`):
+
+```bash
+kubectl -n oilprice create job "training-manual-$(date +%Y%m%d%H%M%S)" \
+  --from=cronjob/training-pipeline
+kubectl -n oilprice logs job/training-manual-<NAME> --tail=40 | grep -E 'driver features|MSE|Registered'
+# driver features used: 11 (basel_level_cm, ... usd_chf)
+# MSE: ...
+# Registered 'oil_price_model' (version N) in the Hopsworks Model Registry
 ```
 
 Einmaliger Rhein-Bootstrap (volle Pegel-Historie seit 2020 und alle

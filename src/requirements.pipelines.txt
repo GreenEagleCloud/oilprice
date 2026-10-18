@@ -12,5 +12,7 @@ pyarrow
 python-dotenv>=1.2.4
 # Port-of-Switzerland monthly cargo bulletins are PDF-only (src/collect_rhein_cargo.py)
 pypdf>=5.1
+# Market drivers: ICE Gasoil / Brent + USD-CHF closes (src/collect_oil_market_prices.py)
+yfinance>=1.7
 # Hopsworks SDK (Feature Store + Model Registry)
 hopsworks[python]==5.1.1

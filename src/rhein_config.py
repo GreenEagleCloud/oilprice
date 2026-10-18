@@ -59,6 +59,9 @@ RHEIN_SNAPSHOT_KEY = "raw/rhein_snapshot.json"
 # Bulletins that were already fetched and parsed (including the ones that
 # yielded no records), so a daily run does not re-download the whole archive.
 RHEIN_BULLETINS_KEY = "raw/rhein_bulletins_parsed.json"
+# Append-only archive of the Kaub raw readings (WSV only serves ~30 days, so
+# the Kaub history has to be accumulated by us - see collect_rhein_kaub_history.py)
+RHEIN_KAUB_RAW_KEY = "raw/rhein_kaub_raw.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +90,9 @@ KAUB = {
     "wsv_number": "25700100",
     "bafu_station": None,
     "rhine_km": 546.23,
-    # WSV only serves the last ~30 days for this station
+    # WSV only serves the last ~30 days for this station; the history beyond
+    # that window is accumulated locally in raw/rhein_kaub_raw.csv
+    # (src/collect_rhein_kaub_history.py).
     "history_start": None,
     "wsv_discharge": True,
     "low_water_cm": 30.0,
@@ -119,6 +124,9 @@ POS_BULLETIN_SEARCH = "Bulletin"
 # ---------------------------------------------------------------------------
 DAILY_LOOKBACK_DAYS = 35     # daily run re-fetches this window (late corrections)
 BOOTSTRAP_START = BASEL["history_start"]
+# WSV Pegelonline caps its REST history at ~30 days (verified 2026-10-18), so
+# this is the widest window collect_rhein_kaub_history.py can ever fetch.
+KAUB_ARCHIVE_WINDOW_DAYS = 30
 
 # ---------------------------------------------------------------------------
 # Feature groups (Hopsworks)
@@ -189,6 +197,7 @@ LOCAL_DIR = REPO_ROOT / "data" / "rhein"
 LOCAL_LEVELS_CSV = LOCAL_DIR / "rhein_levels.csv"
 LOCAL_CARGO_CSV = LOCAL_DIR / "rhein_cargo.csv"
 LOCAL_SNAPSHOT_JSON = LOCAL_DIR / "rhein_snapshot.json"
+LOCAL_KAUB_RAW_CSV = LOCAL_DIR / "rhein_kaub_raw.csv"
 
 FEATURES_DIR = REPO_ROOT / "data" / "features"
 RHEIN_LEVEL_FEATURES_CSV = FEATURES_DIR / "rhein_level_features.csv"
