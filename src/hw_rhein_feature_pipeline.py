@@ -240,6 +240,11 @@ def upsert_feature_group(df: pd.DataFrame, name: str, version: int, primary_key:
     project = login()
     fs = project.get_feature_store()
 
+    # Hopsworks requires the event time column to be a date/timestamp, but the
+    # exported feature frames use plain ISO date strings ("2026-10-18").
+    df = df.copy()
+    df[event_time] = pd.to_datetime(df[event_time])
+
     fg = fs.get_or_create_feature_group(
         name=name,
         version=version,
