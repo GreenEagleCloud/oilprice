@@ -301,7 +301,7 @@ Aktuelle Images:
 
 ```text
 ghcr.io/greeneaglecloud/oilprice-frontend:1.4
-ghcr.io/greeneaglecloud/oilprice-inference:1.3
+ghcr.io/greeneaglecloud/oilprice-inference:1.4
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.4
 ```
 
