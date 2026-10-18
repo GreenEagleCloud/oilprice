@@ -435,14 +435,20 @@ Dargestellt werden:
 
 * **Monats-Achse** – die x-Achse beschriftet nur die Monatsanfänge (`Jan`,
   `Feb` … `Dez`, Januar trägt das Jahr); in langen Zeiträumen wird jedes n-te
-  Monat beschriftet, jedes Januar zusätzlich. Das genaue Datum steht im Tooltip
-  und im Ablese-Kasten.
+  Monat beschriftet, jedes Januar zusätzlich. Das genaue Datum steht im
+  Hover-Kasten und im Ablese-Kasten darüber (das Pegel-Diagramm benutzt
+  weiterhin den Chart.js-Tooltip mit Datum).
 
-* **Ablese-Kasten und Fadenkreuz** – über dem Preisdiagramm stehen Datum und
-  Preis: standardmässig die letzte Messung, beim Überfahren der Tag unter dem
-  Cursor (plus 7-Tage-Mittel, Nachfrageindex, Prognosewert mit Differenz zur
-  Messung und Rheinpegel Basel). Eine dünne graue Senkrechte markiert diesen
-  Tag in Preis- und Pegel-Diagramm – wie auf heizoel24.ch.
+* **Hover-Kasten und Fadenkreuz** – wie beim Liniendiagramm von heizoel24.ch:
+  im Preisdiagramm springt eine dünne graue Senkrechte auf den Tag, der dem
+  Cursor am nächsten liegt, ein Punkt markiert genau diesen Tag auf der Linie,
+  und daneben erscheint ein Kasten mit Datum, Preis, 7-Tage-Mittel,
+  Nachfrageindex, Rheinpegel und – im Prognosebereich – der Prognose samt
+  Differenz zur Messung. Der Kasten klappt an die andere Seite der Linie, wenn
+  rechts kein Platz ist, und bleibt innerhalb des Diagramms; der Chart.js-Tooltip
+  ist dafür ausgeschaltet. Dieselbe Senkrechte erscheint im Pegel-Diagramm.
+  Über dem Diagramm steht der Ablese-Kasten: standardmässig die letzte Messung,
+  beim Überfahren der Tag unter dem Cursor.
 
 * **Marke** – Favicon und Logo sind `src/frontend/static/logo.svg`; das
   Farb-Schema ist die greenEagle.cloud-Palette (Logo-Grün `#38f75c`,
@@ -493,6 +499,14 @@ Dargestellt werden:
   Kurve, und unter dem Diagramm steht je Prognosepunkt die Abweichung
   „Prognose minus gemessen".
 
+* **Prognose-Formular** – der Browser ruft `POST /predict` nur noch mit dem
+  Eingabedatum auf: `current_price`/`current_demand` sind keine Felder mehr,
+  beide Werte kommen aus dem Online-Feature-Store (die API nimmt sie weiterhin
+  an, falls ein Client sie mitgeben will). Das Eingabedatum ist mit **heute**
+  vorbelegt (`todayISO()` in der lokalen Zeitzone, bewusst kein `toISOString()`),
+  `min` ist heute und `max` der letzte vom Vorhersagemodell bedienbare Tag
+  (letzte Messung + 90 Tage, mindestens heute + 90).
+
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
 `src/frontend/` und kann `src/rhein_config.py` nicht importieren.
@@ -536,7 +550,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.7
+ghcr.io/greeneaglecloud/oilprice-frontend:1.8
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

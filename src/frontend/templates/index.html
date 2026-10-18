@@ -100,7 +100,28 @@
         .readout .r-price { font-size: 1.45rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
         .readout .r-unit { font-size: .85rem; font-weight: 600; color: var(--muted); }
         .readout .r-extra { font-size: .78rem; color: var(--muted); }
-        .readout .r-extra.is-forecast { color: var(--red); }
+        .readout .r-forecast { color: var(--red); }
+
+        /* ------------------------------------------------------------------ *
+         * Hover box (line chart of heizoel24.ch): it sits inside the chart,  *
+         * right next to the grey line that snaps to the day under the cursor.*
+         * ------------------------------------------------------------------ */
+        .hover-card {
+            position: absolute; z-index: 3; left: 0; top: 0;
+            min-width: 126px; max-width: 224px; padding: 8px 10px;
+            pointer-events: none;
+            border: 1px solid var(--line); border-left: 4px solid var(--green);
+            border-radius: 8px; background: rgba(255, 255, 255, .97);
+            box-shadow: 0 4px 14px rgba(34, 47, 62, .14);
+            font-size: .78rem; line-height: 1.35; color: var(--ink);
+        }
+        .hover-card[hidden] { display: none; }
+        .hover-card .h-date { display: block; font-size: .72rem; letter-spacing: .04em;
+            text-transform: uppercase; color: var(--muted); }
+        .hover-card .h-price { font-size: 1.15rem; font-weight: 800; }
+        .hover-card .h-unit { font-size: .72rem; font-weight: 600; color: var(--muted); }
+        .hover-card .h-extra { display: block; margin-top: 3px; font-size: .72rem; color: var(--muted); }
+        .hover-card .h-extra.is-forecast { color: var(--red); }
 
         .skeleton { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
         .skeleton-bars { display: flex; align-items: flex-end; gap: 8px; height: 100%; padding: 12px 4px 26px; }
@@ -352,8 +373,10 @@
                     beobachteten Preisvolatilität (Standardabweichung der
                     7-Tage-Änderung über drei Jahre, wächst mit der Wurzel des
                     Horizonts). Fahre mit der Maus über das Diagramm: eine
-                    graue Linie markiert den Tag, das Kasten darüber zeigt Preis
-                    und Datum, und im Pegel-Diagramm erscheint dieselbe Linie.
+                    graue Linie springt auf den nächsten Tag, ein Punkt markiert
+                    ihn auf der Linie, und die Info-Box daneben zeigt Datum,
+                    Preis, 7-Tage-Mittel, Nachfrageindex und - im Prognosebereich
+                    - die Vorhersage. Im Pegel-Diagramm erscheint dieselbe Linie.
                     Die x-Achse beschriftet nur die Monatsanfänge.
                 </div>
             </div>
@@ -368,6 +391,9 @@
                     <div class="skeleton-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
                 </div>
                 <canvas id="priceChart" class="chart-canvas" hidden></canvas>
+                <!-- Hover box: it follows the grey line that snaps to the day
+                     under the cursor, like the line chart of heizoel24.ch. -->
+                <div class="hover-card" id="priceHoverCard" hidden></div>
             </div>
             <!-- The forecast belongs to the chart: the history line continues as
                  a dotted line, so origin, horizon and band are stated here. -->
@@ -396,16 +422,8 @@
                         <label for="dateInput">Eingabedatum</label>
                         <p class="field-hint" id="dateHint"></p>
                     </div>
-                    <div class="field">
-                        <input type="number" id="priceInput" step="0.01" min="0" placeholder=" ">
-                        <label for="priceInput">Aktueller Preis (CHF/100 l)</label>
-                        <p class="field-hint" id="priceHint"></p>
-                    </div>
-                    <div class="field">
-                        <input type="number" id="demandInput" step="1" min="0" placeholder=" ">
-                        <label for="demandInput">Nachfrageindex</label>
-                        <p class="field-hint" id="demandHint"></p>
-                    </div>
+                    <!-- Price and demand are not asked for: the model takes them
+                         from the feature store, so the form only needs the date. -->
                     <button type="submit" class="primary-btn" id="predictBtn">Prognose berechnen</button>
                     <div id="error" class="error" hidden></div>
                 </form>
@@ -566,6 +584,18 @@
         let priceChart = null, rheinChart = null, cargoChart = null;
         const timeCharts = () => [priceChart, rheinChart].filter(Boolean);
 
+        // The value the hover marker sits on: the measured price first, then
+        // the forecast line, then the Rhine level - always the primary axis.
+        function hoverMarkerAt(chart, index) {
+            for (const dataset of chart.data.datasets || []) {
+                if (dataset.yAxisID && dataset.yAxisID !== 'y') continue;
+                if (dataset.borderWidth === 0) continue;   // the two band edges
+                const value = (dataset.data || [])[index];
+                if (value !== null && value !== undefined) return value;
+            }
+            return null;
+        }
+
         // Vertical guide line at the hovered date, drawn in every time chart.
         // Thin and grey (heizoel24.ch): it marks the day, it must not compete
         // with the price line itself.
@@ -586,6 +616,19 @@
                 ctx.moveTo(x, top);
                 ctx.lineTo(x, bottom);
                 ctx.stroke();
+                // The line has to point at something: a point on the curve marks
+                // the exact day the box speaks about.
+                const marker = hoverMarkerAt(chart, idx);
+                if (marker !== null) {
+                    const y = chart.scales.y.getPixelForValue(marker);
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#38f75c';
+                    ctx.fill();
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+                }
                 ctx.restore();
             }
         };
@@ -655,16 +698,15 @@
             return forecastData.points.find((p) => p.date === date) || null;
         }
 
-        function updateReadout() {
-            if (!priceData || !priceData.dates.length) return;
-            const date = hoverDate || latestMeasuredDate();
-            if (!date) return;
+        // Everything the info box answers for one date: measured price, 7-day
+        // mean, demand index, forecast value and the Rhine level of that day.
+        function readoutParts(date) {
             const price = valueAt(priceData.dates, priceData.price, date);
             const mean = valueAt(priceData.dates, priceMean7, date);
             const demand = valueAt(priceData.dates, priceData.demand, date);
             const extras = [];
-            if (mean !== null) extras.push(`<span>7-Tage-Mittel ${fmt(mean)}</span>`);
-            if (demand !== null) extras.push(`<span>Nachfrageindex ${fmt(demand, 1)}</span>`);
+            if (mean !== null) extras.push({text: `7-Tage-Mittel ${fmt(mean)}`, forecast: false});
+            if (demand !== null) extras.push({text: `Nachfrageindex ${fmt(demand, 1)}`, forecast: false});
             const forecast = forecastPointAt(date);
             if (forecast) {
                 let text = `Prognose ${fmt(forecast.value)}`;
@@ -672,16 +714,82 @@
                     const diff = forecast.value - price;
                     text += ` (${diff > 0 ? '+' : ''}${fmt(diff)} gegenüber gemessen)`;
                 }
-                extras.push(`<span class="is-forecast">${text}</span>`);
+                extras.push({text: text, forecast: true});
             }
             const basel = levelData ? valueAt(levelData.dates, levelData.basel, date) : null;
-            if (basel !== null) extras.push(`<span>Rheinpegel Basel ${fmtInt(basel)} cm</span>`);
+            if (basel !== null) extras.push({text: levelFooter(date), forecast: false});
+            return {price: price, extras: extras};
+        }
+
+        function updateReadout() {
+            if (!priceData || !priceData.dates.length) return;
+            const date = hoverDate || latestMeasuredDate();
+            if (!date) return;
+            const parts = readoutParts(date);
+            const extras = parts.extras
+                .map((entry) => entry.forecast
+                    ? `<span class="r-forecast">${entry.text}</span>`
+                    : `<span>${entry.text}</span>`)
+                .join(' · ');
             document.getElementById('priceReadout').innerHTML = [
                 `<span class="r-date">${formatDate(date)}${hoverDate ? '' : ' · letzte Messung'}</span>`,
-                `<span class="r-price">${price === null ? '–' : fmt(price)}</span>`,
+                `<span class="r-price">${parts.price === null ? '–' : fmt(parts.price)}</span>`,
                 '<span class="r-unit">CHF/100 l</span>',
-                extras.length ? `<span class="r-extra">${extras.join(' · ')}</span>` : '',
+                extras ? `<span class="r-extra">${extras}</span>` : '',
             ].join('');
+        }
+
+        /* ------------------------------------------------------------------ *
+         * Hover box inside the chart (line chart of heizoel24.ch): the grey  *
+         * line snaps to the day under the cursor and the box next to it      *
+         * names that day, its price and the values belonging to it.          *
+         * ------------------------------------------------------------------ */
+        function renderHoverCard(date) {
+            const card = document.getElementById('priceHoverCard');
+            if (!priceChart) { card.hidden = true; return; }
+            const labels = priceChart.data.labels || [];
+            const idx = date ? labels.indexOf(date) : -1;
+            if (idx < 0) {
+                card.hidden = true;
+                card.innerHTML = '';
+                return;
+            }
+            const parts = readoutParts(date);
+            const extras = parts.extras.map((entry) =>
+                `<span class="h-extra${entry.forecast ? ' is-forecast' : ''}">${entry.text}</span>`);
+            if (parts.price === null) {
+                // A day the source has not published yet must not read as "0":
+                // the box says plainly that there is no measurement for it.
+                extras.unshift('<span class="h-extra">kein gemessener Preis</span>');
+            }
+            card.innerHTML = [
+                `<span class="h-date">${formatDate(date)}</span>`,
+                `<span class="h-price">${parts.price === null ? '–' : fmt(parts.price)}</span>`,
+                '<span class="h-unit">CHF/100 l</span>',
+                extras.join(''),
+            ].join('');
+            card.hidden = false;
+            positionHoverCard(priceChart, idx);
+        }
+
+        // The box follows the snapped day: to the right of the line, flipped to
+        // its left when there is no room, and never outside the chart area.
+        function positionHoverCard(chart, idx) {
+            const card = document.getElementById('priceHoverCard');
+            const area = chart.chartArea;
+            const x = chart.scales.x.getPixelForValue(idx);
+            const value = hoverMarkerAt(chart, idx);
+            const width = card.offsetWidth || 150;
+            const height = card.offsetHeight || 64;
+            const gap = 12;
+            let left = x + gap;
+            if (left + width > area.right) left = x - gap - width;
+            left = Math.max(area.left, Math.min(left, area.right - width));
+            let top = value === null ? area.top + gap
+                : chart.scales.y.getPixelForValue(value) - height - 12;
+            top = Math.max(area.top + 2, Math.min(top, area.bottom - height - 2));
+            card.style.left = `${Math.round(left)}px`;
+            card.style.top = `${Math.round(top)}px`;
         }
 
         function setHover(date) {
@@ -689,8 +797,11 @@
             hoverDate = date;
             timeCharts().forEach((c) => c.update('none'));
             updateReadout();
+            renderHoverCard(date);
         }
 
+        // Snap the cursor to the nearest day: the line, the marker and the box
+        // always speak about a real day, never about the pixel between two.
         function handleHover(chart, evt, elements) {
             const labels = chart.data.labels || [];
             if (!labels.length) return;
@@ -708,7 +819,8 @@
         }
 
         const hoverOptions = {
-            // 'nearest' + x mode keeps the crosshair and the tooltip in step.
+            // 'index' without intersect: the whole chart area reacts, so the
+            // crosshair, the marker and the box move with the cursor.
             interaction: {mode: 'index', intersect: false},
             onHover: (evt, chart, elements) => handleHover(chart, evt, elements),
             onLeave: () => setHover(null),
@@ -797,7 +909,7 @@
                 document.querySelectorAll('#timeFilter .tf-btn').forEach((b) => b.classList.remove('is-active'));
                 btn.classList.add('is-active');
                 timeframe = btn.dataset.days === 'all' ? 'all' : Number(btn.dataset.days);
-                hoverDate = null;
+                setHover(null);
                 renderPriceChart();
                 renderRheinChart();
                 updateTimeNote();
@@ -915,6 +1027,7 @@
                 forecast.forEach((values, i) => { priceChart.data.datasets[3 + i].data = values; });
                 priceChart.update();
                 updateReadout();
+                renderHoverCard(hoverDate);
                 return;
             }
             priceChart = new Chart(document.getElementById('priceChart'), {
@@ -950,23 +1063,11 @@
                                 filter: (item) => !item.text.startsWith('Band'),
                             },
                         },
-                        tooltip: {callbacks: {
-                            // the axis only shows months, so the tooltip carries
-                            // the exact date
-                            title: (items) => formatDate(items[0].label),
-                            label: (item) => {
-                                const index = item.dataset.yAxisID === 'y1';
-                                const value = item.parsed.y;
-                                if (value === null) return `${item.dataset.label}: kein Wert`;
-                                return `${item.dataset.label}: ${fmt(value, index ? 1 : 2)}${index ? '' : ' CHF/100 l'}`;
-                            },
-                            // combined tooltip: the Rhine level of the same date
-                            footer: (items) => levelFooter(items[0].label),
-                        },
-                            // future days have no measurement yet; listing "kein
-                            // Wert" for all of them would bury the forecast values
-                            filter: (item) => !(item.dataset.label === 'Tatsächlich gemessen' && item.parsed.y === null),
-                        },
+                        // The built-in tooltip would list every series of the day
+                        // in a second box. The hover box next to the grey line
+                        // says the same in one place, so the tooltip is off here
+                        // (the Rhine chart keeps its own tooltip).
+                        tooltip: {enabled: false},
                     },
                     scales: {
                         x: {ticks: monthTicks(dates), grid: {display: false}},
@@ -1096,6 +1197,9 @@
                     plugins: {
                         legend: {labels: {font: {size: 11}, boxWidth: 12}},
                         tooltip: {callbacks: {
+                            // the axis only shows months, so the tooltip carries
+                            // the exact date
+                            title: (items) => formatDate(items[0].label),
                             label: (item) => `${item.dataset.label}: ${item.parsed.y === null ? 'kein Wert' : fmtInt(item.parsed.y) + ' cm'}`,
                             // combined tooltip: the heating-oil price of the same date
                             footer: (items) => priceFooter(items[0].label),
@@ -1197,35 +1301,32 @@
         }
 
         /* ------------------------------------------------------------------ *
-         * Forecast form: prefill with the latest available values           *
+         * Forecast form: the only input is the date, and it defaults to today *
          * ------------------------------------------------------------------ */
+        // Today in the browser's own calendar: toISOString() would shift the day
+        // for everyone in a zone east of UTC.
+        function todayISO() {
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        }
+
         function prefillForm() {
             if (!priceData || !priceData.dates.length) return;
             let last = priceData.dates.length - 1;
             while (last > 0 && priceData.price[last] === null) last--;
-            const date = priceData.dates[last];
-            const price = priceData.price[last];
-            const demand = priceData.demand[last];
-            const priceInput = document.getElementById('priceInput');
-            const demandInput = document.getElementById('demandInput');
+            const origin = priceData.dates[last];
+            const today = todayISO();
             const dateInput = document.getElementById('dateInput');
-            dateInput.value = date;
-            // The forward model serves horizons 1..90 days from the origin date,
-            // so the picker must not offer a date the backend would reject.
-            dateInput.min = addDays(date, 1);
-            dateInput.max = addDays(date, 90);
-            if (price !== null) priceInput.value = price;
-            // Keep the placeholder blank: the floating label only works while the
-            // placeholder is shown, so the fallback value is explained in the hint.
-            priceInput.placeholder = ' ';
-            demandInput.placeholder = ' ';
+            // The forward model serves horizons 1..90 days from the last measured
+            // day, so the picker must not offer a date the backend would reject.
+            const latest = addDays(origin, 90) > today ? addDays(origin, 90) : addDays(today, 90);
+            dateInput.value = today;
+            dateInput.min = today;
+            dateInput.max = latest;
             document.getElementById('dateHint').textContent =
-                `Prognosen möglich für ${addDays(date, 1)} bis ${addDays(date, 90)} (1–90 Tage ab ${date})`;
-            document.getElementById('priceHint').textContent = price === null
-                ? 'Leer lassen: der Wert kommt aus dem Feature Store'
-                : `Aktueller Preis am ${date}: ${fmt(price)} CHF/100 l – leer lassen für den Feature-Store-Wert`;
-            document.getElementById('demandHint').textContent =
-                'Nachfrageindex (BFS-Verkaufsmenge, Index 2020 = 100) – leer lassen für den Schätzwert';
+                `Standard ist heute; Prognosen bis ${latest} möglich. Ausgangstag des Modells `
+                + `ist der letzte Messwert ${origin} – Preis und Nachfrage kommen aus dem Feature Store.`;
         }
 
         document.getElementById('forecastForm').addEventListener('submit', async (e) => {
@@ -1237,10 +1338,6 @@
             btn.textContent = 'Berechne Prognose …';
             try {
                 const body = {date: document.getElementById('dateInput').value};
-                const priceValue = parseFloat(document.getElementById('priceInput').value);
-                const demandValue = parseFloat(document.getElementById('demandInput').value);
-                if (!Number.isNaN(priceValue)) body.current_price = priceValue;
-                if (!Number.isNaN(demandValue)) body.current_demand = demandValue;
                 const res = await fetch('/predict', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1293,15 +1390,6 @@
          * at the newest measured price date (weekly model first, then the    *
          * forward model out to the configured horizon).                      *
          * ------------------------------------------------------------------ */
-        function forecastInputs() {
-            const price = parseFloat(document.getElementById('priceInput').value);
-            const demand = parseFloat(document.getElementById('demandInput').value);
-            const params = new URLSearchParams();
-            if (!Number.isNaN(price) && price > 0) params.set('current_price', price);
-            if (!Number.isNaN(demand) && demand > 0) params.set('current_demand', demand);
-            return params;
-        }
-
         function showForecastError(message) {
             const box = document.getElementById('forecastError');
             box.innerHTML = `<span>Prognose-Kurve nicht verfügbar: ${message}</span>`
@@ -1341,9 +1429,7 @@
         }
 
         async function loadForecast() {
-            const params = forecastInputs();
-            const query = params.toString() ? `?${params.toString()}` : '';
-            const res = await fetch(`/api/forecast${query}`);
+            const res = await fetch('/api/forecast');
             let payload = {};
             try {
                 payload = await res.json();

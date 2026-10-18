@@ -158,9 +158,9 @@ def test_measured_prices_run_into_the_forecast_region(page):
     chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
     assert "'Tatsächlich gemessen'" in chart
     assert "data: forecast[4]" in chart
-    # days of the forecast window that are not measured yet must not flood the
-    # tooltip with "kein Wert"
-    assert "item.dataset.label === 'Tatsächlich gemessen' && item.parsed.y === null" in chart
+    # days of the forecast window that are not measured yet must not pretend a
+    # measurement: the hover box says so explicitly for those days
+    assert "kein gemessener Preis" in page
     # the update path writes every forecast array, so the new series keeps its
     # data when the timeframe or the forecast changes (the three history series
     # come first, then the five forecast arrays)
@@ -195,8 +195,9 @@ def test_demand_index_is_a_series_of_its_own(page):
     assert "y1: {" in chart
     # a second grid over the price grid would make the chart unreadable
     assert "grid: {drawOnChartArea: false}" in chart
-    # the index is not a price: the tooltip must not label it CHF/100 l
-    assert "item.dataset.yAxisID === 'y1'" in chart
+    # the index is not a price: the hover marker must only sit on the price axis
+    marker = page[page.index("function hoverMarkerAt"): page.index("const crosshairPlugin")]
+    assert "dataset.yAxisID !== 'y'" in marker
 
 
 def test_x_axis_is_labelled_by_month(page):
@@ -220,7 +221,7 @@ def test_x_axis_is_labelled_by_month(page):
 def test_readout_box_shows_price_and_date(page):
     """The box above the chart answers "what price, which date?" without hovering."""
     assert '<div class="readout" id="priceReadout" aria-live="polite">' in page
-    body = page[page.index("function updateReadout"): page.index("function renderPriceChart")]
+    body = page[page.index("function readoutParts"): page.index("function renderPriceChart")]
     assert "formatDate(date)" in body
     assert "latestMeasuredDate()" in body
     assert "letzte Messung" in body
@@ -319,9 +320,72 @@ def test_tabs_are_keyboard_navigable(page):
 def test_date_input_is_clamped_to_the_supported_horizon(page):
     """The forward model serves 1-90 days from the origin date; the picker must
     not offer a date the backend would reject."""
-    assert "dateInput.min = addDays(date, 1);" in page
-    assert "dateInput.max = addDays(date, 90);" in page
+    body = page[page.index("function prefillForm"): page.index("addEventListener('submit'")]
+    assert "dateInput.min = today;" in body
+    assert "dateInput.max = latest;" in body
+    assert "addDays(origin, 90)" in body
     # local date arithmetic: toISOString() would shift the day for every zone
     # east of UTC and the picker would offer the wrong range
-    body = page[page.index("const addDays"): page.index("const addDays") + 400]
-    assert "toISOString" not in body
+    for anchor in ("const addDays", "function todayISO"):
+        chunk = page[page.index(anchor): page.index(anchor) + 400]
+        assert "toISOString" not in chunk
+
+
+# ---------------------------------------------------------------------------
+# Forecast form inputs and the hover box of the price chart
+# ---------------------------------------------------------------------------
+
+def test_forecast_form_only_asks_for_the_date(page):
+    """Price and demand come from the feature store: asking for them as live
+    inputs only produced values nobody could check."""
+    form = page[page.index('id="forecastForm"'): page.index("</form>")]
+    assert 'id="dateInput"' in form
+    assert 'id="priceInput"' not in form and 'id="demandInput"' not in form
+    assert "current_price" not in form and "current_demand" not in form
+    # the prediction request sends the date only
+    body = page[page.index("const body = {date"): page.index("const res = await fetch('/predict'")]
+    assert body.strip().startswith("const body = {date: document.getElementById('dateInput').value};")
+    # and so does the curve request
+    assert "fetch('/api/forecast')" in page
+
+
+def test_forecast_date_defaults_to_the_current_date(page):
+    """The picker starts at today - the date a visitor actually asks about."""
+    body = page[page.index("function todayISO"): page.index("addEventListener('submit'")]
+    assert "const today = todayISO();" in body
+    assert "dateInput.value = today;" in body
+    assert "now.getFullYear()" in body
+
+
+def test_hover_box_snaps_to_the_day_under_the_cursor(page):
+    """Like the line chart of heizoel24.ch: the grey line jumps to the nearest
+    day, and the box next to it names that day, its price and its values."""
+    assert '<div class="hover-card" id="priceHoverCard" hidden></div>' in page
+    body = page[page.index("function renderHoverCard"): page.index("function setHover")]
+    assert "formatDate(date)" in body
+    assert "positionHoverCard(priceChart, idx)" in body
+    # the box sits at the pixel of the snapped day and flips to the other side
+    # of the line when there is no room to the right
+    assert "chart.scales.x.getPixelForValue(idx)" in body
+    assert "area.right - width" in body
+    # the built-in tooltip of the price chart is replaced by that box
+    chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
+    assert "tooltip: {enabled: false}" in chart
+    # hovering fills it, leaving the chart clears it again
+    hover = page[page.index("function setHover"): page.index("function handleHover")]
+    assert "renderHoverCard(date)" in hover
+    assert "onLeave: () => setHover(null)" in page
+    # the cursor is snapped to a day, never to the pixel between two days
+    snap = page[page.index("function handleHover"): page.index("const hoverOptions")]
+    assert "Math.round(chart.scales.x.getValueForPixel(evt.x))" in snap
+
+
+def test_hover_marker_points_at_the_snapped_day(page):
+    """The line must point at something: the crosshair draws a point on the
+    curve of exactly that date."""
+    body = page[page.index("const crosshairPlugin"): page.index("const todayPlugin")]
+    assert "hoverMarkerAt(chart, idx)" in body
+    assert "ctx.arc(x, y, 4" in body
+    marker = page[page.index("function hoverMarkerAt"): page.index("const crosshairPlugin")]
+    # the measured price wins over the forecast line, the band edges never
+    assert "if (dataset.borderWidth === 0) continue" in marker
