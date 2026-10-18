@@ -954,8 +954,13 @@
 
             // 1) The black 7-day-mean line does not stop at the last measurement:
             //    it runs on to the origin day, which is where the forecast begins.
-            let meanAtOrigin = valueAt(dates, priceMean7, origin);
-            if (meanAtOrigin === null) meanAtOrigin = valueAt(dates, priceData.price, origin);
+            //    The mean and the price are arrays of the *whole* history, so they
+            //    are looked up in priceData.dates - `dates` is the shortened window
+            //    plus the forecast days and numbers its days differently. Reading
+            //    the mean by the window index picks the mean of some day years back
+            //    and drops the forecast line down onto the demand curve.
+            let meanAtOrigin = valueAt(priceData.dates, priceMean7, origin);
+            if (meanAtOrigin === null) meanAtOrigin = valueAt(priceData.dates, priceData.price, origin);
             if (weeklyPoint && originIdx >= 0 && meanAtOrigin !== null) {
                 mean[originIdx] = meanAtOrigin;
             }

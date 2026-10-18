@@ -173,6 +173,19 @@ def test_forecast_continues_the_seven_day_mean(page):
     assert "const mean = week.reduce((sum, v) => sum + v, 0) / week.length;" in diff
 
 
+def test_forecast_origin_reads_the_value_from_the_whole_history(page):
+    """The chart labels are a window of the history plus the forecast days, so
+    their numbers are not the numbers of the price arrays. The value the
+    forecast hangs on has to be looked up in the full history - reading it by
+    the window index picks the mean of some day years back and drops the
+    forecast line down onto the demand curve."""
+    body = page[page.index("function forecastSeries"): page.index("function measuredForecastPoints")]
+    assert "valueAt(priceData.dates, priceMean7, origin)" in body
+    assert "valueAt(priceData.dates, priceData.price, origin)" in body
+    assert "valueAt(dates, priceMean7" not in body
+    assert "valueAt(dates, priceData.price" not in body
+
+
 def test_forecast_curve_is_loaded_without_pressing_the_button(page):
     """The chart is extended by default, so the forecast follows the history."""
     assert "loadPriceHistory()\n            .then(() => loadForecast())" in page
