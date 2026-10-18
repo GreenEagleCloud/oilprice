@@ -426,6 +426,29 @@ Dargestellt werden:
   entfernt, damit ein Diagramm im anderen Tab Daten und Grösse behält; die
   Tabs sind ARIA-Tablist mit Pfeiltasten-Navigation.
 
+* **Preisdiagramm** – die gemessenen Tagespreise sind eine **durchgezogene**
+  grüne Linie über **jeden einzelnen Tag** der Serie (kein Sample-Dropping,
+  kein gestrichelter Verlauf bis heute) und laufen in das Prognosefenster
+  hinein; der Nachfrageindex (Index 2020 = 100) zeichnet als eigene blaue Serie
+  auf der rechten Achse, das 7-Tage-Mittel als dunkle Hilfslinie. Gestrichelt
+  ist ausschliesslich die Prognose.
+
+* **Monats-Achse** – die x-Achse beschriftet nur die Monatsanfänge (`Jan`,
+  `Feb` … `Dez`, Januar trägt das Jahr); in langen Zeiträumen wird jedes n-te
+  Monat beschriftet, jedes Januar zusätzlich. Das genaue Datum steht im Tooltip
+  und im Ablese-Kasten.
+
+* **Ablese-Kasten und Fadenkreuz** – über dem Preisdiagramm stehen Datum und
+  Preis: standardmässig die letzte Messung, beim Überfahren der Tag unter dem
+  Cursor (plus 7-Tage-Mittel, Nachfrageindex, Prognosewert mit Differenz zur
+  Messung und Rheinpegel Basel). Eine dünne graue Senkrechte markiert diesen
+  Tag in Preis- und Pegel-Diagramm – wie auf heizoel24.ch.
+
+* **Marke** – Favicon und Logo sind `src/frontend/static/logo.svg`; das
+  Farb-Schema ist die greenEagle.cloud-Palette (Logo-Grün `#38f75c`,
+  Marken-Blau `#066aab`, Alarm-Rot `#ec5146`, Tinte `#222f3e` aus dem Logo).
+  Unten rechts steht der Hinweis „Bereitgestellt von greenEagle.cloud".
+
 * **Pegel-Kacheln** – aktueller Wert Basel-Rheinhalle und Kaub, Engstelle
   (`min(Basel, Kaub)`) und Niedrigwasser-Status. Eine Kachel wird rot, sobald
   eine Station unter ihrer Marke liegt (Basel 350 cm, Kaub 30 cm).
@@ -463,11 +486,12 @@ Dargestellt werden:
   die Geschichte darf nicht an der letzten Messung enden, wo die Prognose beginnt:
   der Response enthält für jeden Kalendertag vom Ausgangstag bis zum letzten
   Prognosepunkt den tatsächlich gemessenen Tagespreis (`null`, wo die Quelle für
-  diesen Tag nichts publiziert hat), und das Diagramm zeichnet ihn als eigene
-  Serie „Tatsächlich gemessen". Die x-Achse bekommt für jeden dieser Tage ein
-  Label, sonst hätte die Linie keinen Platz. Sobald ein prognostizierter Tag
-  veröffentlicht ist, liegt er damit auf der Kurve, und unter dem Diagramm steht
-  je Prognosepunkt die Abweichung „Prognose minus gemessen".
+  diesen Tag nichts publiziert hat), und das Diagramm zeichnet ihn in derselben
+  grünen Linie wie die Geschichte (Serie „Tatsächlich gemessen"). Die x-Achse
+  bekommt für jeden dieser Tage ein Label, sonst hätte die Linie keinen Platz.
+  Sobald ein prognostizierter Tag veröffentlicht ist, liegt er damit auf der
+  Kurve, und unter dem Diagramm steht je Prognosepunkt die Abweichung
+  „Prognose minus gemessen".
 
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
@@ -512,7 +536,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.6
+ghcr.io/greeneaglecloud/oilprice-frontend:1.7
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

@@ -3,30 +3,59 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Heizölpreis-Prognose</title>
+    <title>Heizölpreis-Prognose für die Schweiz</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
-            --bg: #f6f7f9;
+            /* greenEagle.cloud brand (same values as static/logo.svg):
+               logo green #38f75c, brand blue #066aab, alert red #ec5146,
+               ink #222f3e taken from the logo square. */
+            --bg: #f8f9fb;
             --card: #ffffff;
-            --ink: #1f2933;
-            --muted: #6b7280;
+            --ink: #222f3e;
+            --muted: #5c6b7a;
             --line: #e3e7ec;
-            --accent: #0b7285;
-            --accent-soft: #e3f2f6;
-            --warn: #b42318;
+            --accent: #066aab;
+            --accent-ink: #ffffff;
+            --accent-soft: #e8f1f8;
+            --green: #38f75c;
+            --red: #ec5146;
+            --warn: #b91c1c;
             --warn-soft: #fdecea;
             --radius: 12px;
         }
         * { box-sizing: border-box; }
         body {
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-            margin: 0 auto; padding: 0 16px 48px; max-width: 1180px;
-            background: var(--bg); color: var(--ink);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; background: var(--bg); color: var(--ink); line-height: 1.5;
         }
-        h1 { font-size: 1.5rem; margin: 24px 0 4px; }
+        .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 56px; }
         h2 { font-size: 1.05rem; margin: 0; }
         .sub { color: var(--muted); margin: 0 0 16px; font-size: .9rem; }
+
+        /* ------------------------------------------------------------------ *
+         * Brand bar: logo.svg is the logo and the favicon of the page.      *
+         * ------------------------------------------------------------------ */
+        .brandbar {
+            background: var(--card);
+            border-bottom: 3px solid var(--green);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .brandbar-inner {
+            max-width: 1180px; margin: 0 auto; padding: 14px 16px;
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand-logo { width: 46px; height: 46px; }
+        .brand h1 { font-size: 1.35rem; margin: 0; color: var(--ink); }
+        .powered-footer {
+            position: fixed; bottom: 10px; right: 14px; z-index: 10;
+            color: var(--muted); font-size: .85rem;
+            background: rgba(255, 255, 255, .9); padding: 2px 10px; border-radius: 8px;
+        }
+        .powered-footer a { color: var(--accent); font-weight: 700; text-decoration: none; }
+        .powered-footer a:hover { text-decoration: underline; }
 
         /* ------------------------------------------------------------------ *
          * Global time filter: one control for every time-based chart.       *
@@ -56,6 +85,22 @@
         .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
         .chart-wrap { position: relative; height: 320px; }
         .chart-canvas { display: block; width: 100%; height: 100%; }
+
+        /* ------------------------------------------------------------------ *
+         * Readout box (like heizoel24.ch): the price and date of the date   *
+         * the cursor is on - the latest measurement while nothing is hovered.*
+         * ------------------------------------------------------------------ */
+        .readout {
+            display: flex; align-items: baseline; gap: 8px 14px; flex-wrap: wrap;
+            margin: 0 0 10px; padding: 10px 14px;
+            border: 1px solid var(--line); border-left: 5px solid var(--green);
+            border-radius: 10px; background: #fbfcfd;
+        }
+        .readout .r-date { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+        .readout .r-price { font-size: 1.45rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
+        .readout .r-unit { font-size: .85rem; font-weight: 600; color: var(--muted); }
+        .readout .r-extra { font-size: .78rem; color: var(--muted); }
+        .readout .r-extra.is-forecast { color: var(--red); }
 
         .skeleton { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
         .skeleton-bars { display: flex; align-items: flex-end; gap: 8px; height: 100%; padding: 12px 4px 26px; }
@@ -98,7 +143,7 @@
         .info-pop {
             position: absolute; z-index: 25; left: 0; top: calc(100% + 6px);
             max-width: 420px; padding: 10px 12px; font-size: .82rem; line-height: 1.45;
-            background: #1f2933; color: #f4f6f8; border-radius: 8px;
+            background: var(--ink); color: #f4f6f8; border-radius: 8px;
             box-shadow: 0 8px 24px rgba(16, 24, 40, .18);
         }
         .info-pop[hidden] { display: none; }
@@ -128,8 +173,8 @@
 
         /* Result card: the number the whole page is about. */
         .result-card {
-            border: 1px solid #bfe3ea; border-left: 6px solid var(--accent);
-            background: linear-gradient(180deg, #f2fafc, #ffffff);
+            border: 1px solid #b9d6ea; border-left: 6px solid var(--accent);
+            background: linear-gradient(180deg, #f2f7fc, #ffffff);
         }
         .result-card[hidden] { display: none; }
         .result-label { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
@@ -159,18 +204,18 @@
         .primary-btn {
             font: inherit; font-size: 1rem; font-weight: 700; width: 100%;
             padding: 14px 18px; margin-top: 6px; cursor: pointer;
-            border: 0; border-radius: 10px; background: var(--accent); color: #fff;
-            box-shadow: 0 4px 14px rgba(11, 114, 133, .25);
+            border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+            box-shadow: 0 4px 14px rgba(6, 106, 171, .25);
         }
-        .primary-btn:hover { background: #095c6c; }
-        .primary-btn:disabled { background: #9fb4bb; cursor: progress; box-shadow: none; }
+        .primary-btn:hover { background: #05598f; }
+        .primary-btn:disabled { background: #a8bdd4; cursor: progress; box-shadow: none; }
         .error { color: var(--warn); font-size: .85rem; margin-top: 10px; }
         .error[hidden] { display: none; }
         /* Inline failure card: a failed request must never leave a blank box. */
         .error-card {
             display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
             margin-top: 10px; padding: 10px 12px; border-radius: 10px;
-            border: 1px solid #f3c9c4; background: var(--warn-soft);
+            border: 1px solid #f7cdc8; background: var(--warn-soft);
             color: var(--warn); font-size: .85rem;
         }
         .error-card[hidden] { display: none; }
@@ -230,8 +275,8 @@
             border: 1px solid var(--line); background: #fff; color: var(--muted);
             white-space: nowrap;
         }
-        .chip.is-model { border-color: #bfe3ea; background: var(--accent-soft); color: #085562; }
-        .chip.is-warn { border-color: #f3c9c4; background: var(--warn-soft); color: var(--warn); }
+        .chip.is-model { border-color: #b9d6ea; background: var(--accent-soft); color: #05517f; }
+        .chip.is-warn { border-color: #f7cdc8; background: var(--warn-soft); color: var(--warn); }
         .retry-btn {
             font: inherit; font-size: .78rem; padding: 5px 11px; cursor: pointer;
             border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink);
@@ -252,8 +297,16 @@
     </style>
 </head>
 <body>
-    <h1>Heizölpreis-Prognose</h1>
-    <p class="sub">Preise, Rheinpegel und Prognose für Heizöl in der Schweiz</p>
+<header class="brandbar">
+    <div class="brandbar-inner">
+        <div class="brand">
+            <img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="greenEagle.cloud-Logo">
+            <h1>Heizölpreis-Prognose für die Schweiz</h1>
+        </div>
+    </div>
+</header>
+<div class="wrap">
+    <p class="sub">Tagespreise und Nachfrageindex von heizoel24.ch, Rheinpegel und Prognose für Heizöl in der Schweiz</p>
 
     <!-- Tabs: the three views live in one box. Panels are switched, not loaded,
          so every chart keeps its data while another tab is open. -->
@@ -285,22 +338,29 @@
                 <h2>Heizölpreise</h2>
                 <button type="button" class="info-btn" data-info="priceInfo" aria-label="Erklärung zum Preisdiagramm">i</button>
                 <div class="info-pop" id="priceInfo" role="tooltip" hidden>
-                    Tagesdurchschnittspreis in CHF pro 100 Liter (gepunktete Linie)
-                    und 7-Tage-Mittel (durchgezogene Linie). Ab der letzten
+                    Tagesdurchschnittspreis in CHF pro 100 Liter: die grüne
+                    Linie ist jeder einzelne gemessene Tag – kein Mittelwert und
+                    keine ausgelassenen Tage – bis hin zum heute. Die blaue Linie
+                    rechts ist der Nachfrageindex (2020 = 100). Ab der letzten
                     Messung – markiert durch die senkrechte Linie – geht es
                     gestrichelt weiter: der erste Punkt kommt vom Wochenmodell,
                     die Linie danach vom Vorhersagemodell in 7-Tage-Schritten.
-                    Die dunkle Linie mit Punkten sind die tatsächlich gemessenen
-                    Tagespreise desselben Zeitraums: sie läuft bis heute und
-                    weiter in die Prognose hinein, sobald die Tage veröffentlicht
-                    sind, damit Vorhersage und Realität im gleichen Diagramm
-                    vergleichbar bleiben. Das flächige Band ist keine
+                    Die gemessenen Tage des Prognosefensters zeichnet dieselbe
+                    grüne Linie, damit Vorhersage und Realität im gleichen
+                    Diagramm vergleichbar bleiben. Das flächige Band ist keine
                     Modellunsicherheit, sondern eine Schätzung aus der
                     beobachteten Preisvolatilität (Standardabweichung der
                     7-Tage-Änderung über drei Jahre, wächst mit der Wurzel des
-                    Horizonts). Fahre mit der Maus über das Diagramm: im
-                    Pegel-Diagramm erscheint dieselbe Datumslinie.
+                    Horizonts). Fahre mit der Maus über das Diagramm: eine
+                    graue Linie markiert den Tag, das Kasten darüber zeigt Preis
+                    und Datum, und im Pegel-Diagramm erscheint dieselbe Linie.
+                    Die x-Achse beschriftet nur die Monatsanfänge.
                 </div>
+            </div>
+            <div class="readout" id="priceReadout" aria-live="polite">
+                <span class="r-date">–</span>
+                <span class="r-price">–</span>
+                <span class="r-unit">CHF/100 l</span>
             </div>
             <div class="chart-wrap">
                 <div class="skeleton" id="priceSkeleton">
@@ -424,6 +484,11 @@
         </div><!-- /panel-fracht -->
 
     </main>
+</div><!-- /wrap -->
+
+<footer class="powered-footer">
+    <span>Bereitgestellt von <a href="https://www.greeneagle.cloud" target="_blank" rel="noopener">greenEagle.cloud</a></span>
+</footer>
 
     <script>
         // Readable feature labels provided by src/frontend/app.py.
@@ -441,6 +506,54 @@
         };
 
         /* ------------------------------------------------------------------ *
+         * Month axis (like heizoel24.ch): only the first label of a month is *
+         * drawn, so the axis reads "Jan Feb Mär …" instead of a date every   *
+         * few days. January carries the year; the tooltip and the readout    *
+         * box still show the exact date.                                     *
+         * ------------------------------------------------------------------ */
+        const MONTH_NAMES = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+                             'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+        function monthLabel(dateStr) {
+            const month = Number(String(dateStr).slice(5, 7));
+            const name = MONTH_NAMES[month - 1] || '';
+            // only January carries the year, the rest of the axis stays "Feb",
+            // "Mär" ... like the axis of heizoel24.ch
+            return month === 1 ? `${name} ${String(dateStr).slice(0, 4)}` : name;
+        }
+
+        function monthTicks(labels, maxLabels = 14) {
+            // Which month is which on the axis, and which index starts it.
+            const starts = new Map();
+            (labels || []).forEach((date, index) => {
+                const month = String(date).slice(0, 7);
+                if (!starts.has(month)) starts.set(month, index);
+            });
+            const months = Array.from(starts.keys());
+            const step = Math.max(1, Math.ceil(months.length / maxLabels));
+            const order = new Map(months.map((month, i) => [month, i]));
+            return {
+                autoSkip: false,
+                maxRotation: 0,
+                font: {size: 10},
+                callback: function (value, index) {
+                    const label = this.getLabelForValue(value) || '';
+                    const month = label.slice(0, 7);
+                    // one label per month, at the first day of that month on the axis
+                    if (starts.get(month) !== index) return '';
+                    if (label.slice(5, 7) !== '01' && order.get(month) % step !== 0) return '';
+                    return monthLabel(label);
+                },
+            };
+        }
+
+        // "18.10.2026" - the date format of the readout box and the tooltips.
+        function formatDate(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            return d.toLocaleDateString('de-CH', {day: '2-digit', month: '2-digit', year: 'numeric'});
+        }
+
+        /* ------------------------------------------------------------------ *
          * Shared state: one time window and one hover date for both charts. *
          * ------------------------------------------------------------------ */
         let timeframe = 90;          // days, 'all' = whole history
@@ -454,6 +567,8 @@
         const timeCharts = () => [priceChart, rheinChart].filter(Boolean);
 
         // Vertical guide line at the hovered date, drawn in every time chart.
+        // Thin and grey (heizoel24.ch): it marks the day, it must not compete
+        // with the price line itself.
         const crosshairPlugin = {
             id: 'crosshair',
             afterDatasetsDraw(chart) {
@@ -465,9 +580,8 @@
                 const {top, bottom} = chart.chartArea;
                 const ctx = chart.ctx;
                 ctx.save();
-                ctx.setLineDash([5, 4]);
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = 'rgba(11, 114, 133, .8)';
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = 'rgba(92, 107, 122, .75)';
                 ctx.beginPath();
                 ctx.moveTo(x, top);
                 ctx.lineTo(x, bottom);
@@ -495,8 +609,8 @@
                 ctx.moveTo(x, top);
                 ctx.lineTo(x, bottom);
                 ctx.stroke();
-                ctx.fillStyle = 'rgba(31, 41, 51, .75)';
-                ctx.font = '10px system-ui, sans-serif';
+                ctx.fillStyle = 'rgba(34, 47, 62, .75)';
+                ctx.font = '10px -apple-system, system-ui, sans-serif';
                 ctx.fillText('letzte Messung', x + 5, top + 11);
                 ctx.restore();
             }
@@ -524,10 +638,57 @@
             return out;
         }
 
+        /* ------------------------------------------------------------------ *
+         * Readout box above the price chart: date and price of the hovered  *
+         * day, or of the latest measurement while nothing is hovered.       *
+         * ------------------------------------------------------------------ */
+        function latestMeasuredDate() {
+            if (!priceData || !priceData.dates.length) return null;
+            let i = priceData.dates.length - 1;
+            while (i > 0 && priceData.price[i] === null) i--;
+            return priceData.dates[i];
+        }
+
+        // The forecast point that describes a date, if the curve covers it.
+        function forecastPointAt(date) {
+            if (!forecastData || !forecastData.points) return null;
+            return forecastData.points.find((p) => p.date === date) || null;
+        }
+
+        function updateReadout() {
+            if (!priceData || !priceData.dates.length) return;
+            const date = hoverDate || latestMeasuredDate();
+            if (!date) return;
+            const price = valueAt(priceData.dates, priceData.price, date);
+            const mean = valueAt(priceData.dates, priceMean7, date);
+            const demand = valueAt(priceData.dates, priceData.demand, date);
+            const extras = [];
+            if (mean !== null) extras.push(`<span>7-Tage-Mittel ${fmt(mean)}</span>`);
+            if (demand !== null) extras.push(`<span>Nachfrageindex ${fmt(demand, 1)}</span>`);
+            const forecast = forecastPointAt(date);
+            if (forecast) {
+                let text = `Prognose ${fmt(forecast.value)}`;
+                if (price !== null) {
+                    const diff = forecast.value - price;
+                    text += ` (${diff > 0 ? '+' : ''}${fmt(diff)} gegenüber gemessen)`;
+                }
+                extras.push(`<span class="is-forecast">${text}</span>`);
+            }
+            const basel = levelData ? valueAt(levelData.dates, levelData.basel, date) : null;
+            if (basel !== null) extras.push(`<span>Rheinpegel Basel ${fmtInt(basel)} cm</span>`);
+            document.getElementById('priceReadout').innerHTML = [
+                `<span class="r-date">${formatDate(date)}${hoverDate ? '' : ' · letzte Messung'}</span>`,
+                `<span class="r-price">${price === null ? '–' : fmt(price)}</span>`,
+                '<span class="r-unit">CHF/100 l</span>',
+                extras.length ? `<span class="r-extra">${extras.join(' · ')}</span>` : '',
+            ].join('');
+        }
+
         function setHover(date) {
             if (date === hoverDate) return;
             hoverDate = date;
             timeCharts().forEach((c) => c.update('none'));
+            updateReadout();
         }
 
         function handleHover(chart, evt, elements) {
@@ -663,7 +824,7 @@
          * band around it is the volatility estimate from /api/forecast - the *
          * models themselves return a point prediction only.                 *
          * ------------------------------------------------------------------ */
-        const FORECAST_BAND = 'rgba(18, 152, 178, .15)';
+        const FORECAST_BAND = 'rgba(236, 81, 70, .14)';
 
         // The x axis must reach into the future, otherwise the forecast points
         // have no label to sit on. History days and forecast days are separate
@@ -740,14 +901,20 @@
             const dates = extendedDates(historyDates);
             // history arrays stay aligned with the (longer) label list
             const pad = (values) => values.concat(new Array(dates.length - values.length).fill(null));
-            const history = [pad(priceData.price.slice(start)), pad(priceMean7.slice(start))];
+            const history = [
+                pad(priceData.price.slice(start)),
+                pad(priceMean7.slice(start)),
+                pad((priceData.demand || []).slice(start)),
+            ];
             const forecast = forecastSeries(dates);
             if (priceChart) {
                 priceChart.data.labels = dates;
                 priceChart.data.datasets[0].data = history[0];
                 priceChart.data.datasets[1].data = history[1];
-                forecast.forEach((values, i) => { priceChart.data.datasets[2 + i].data = values; });
+                priceChart.data.datasets[2].data = history[2];
+                forecast.forEach((values, i) => { priceChart.data.datasets[3 + i].data = values; });
                 priceChart.update();
+                updateReadout();
                 return;
             }
             priceChart = new Chart(document.getElementById('priceChart'), {
@@ -755,17 +922,21 @@
                 data: {
                     labels: dates,
                     datasets: [
-                        {label: 'Preis', data: history[0], borderColor: '#0b7285', borderWidth: 2, borderDash: [6, 4], tension: .2, pointRadius: 0},
-                        {label: '7-Tage-Mittel', data: history[1], borderColor: '#f08c00', borderWidth: 2, tension: .2, pointRadius: 0},
+                        // Every measured day, unthinned, drawn as one solid line
+                        // up to today - the daily price is the story of this chart.
+                        {label: 'Preis (gemessen)', data: history[0], borderColor: '#38f75c', backgroundColor: 'rgba(56, 247, 92, .10)', borderWidth: 2, tension: .15, pointRadius: 0, pointHoverRadius: 3, spanGaps: true, fill: true, yAxisID: 'y'},
+                        {label: '7-Tage-Mittel', data: history[1], borderColor: '#222f3e', borderWidth: 1.5, borderDash: [4, 3], tension: .15, pointRadius: 0, spanGaps: true, fill: false, yAxisID: 'y'},
+                        {label: 'Nachfrageindex', data: history[2], borderColor: '#066aab', borderWidth: 1.5, tension: .15, pointRadius: 0, pointHoverRadius: 3, spanGaps: true, fill: false, yAxisID: 'y1'},
                         // Band: the upper edge is filled down to the next dataset.
                         {label: 'Band obere Marke', data: forecast[0], borderColor: 'transparent', backgroundColor: FORECAST_BAND, borderWidth: 0, pointRadius: 0, fill: '+1', tension: .2},
                         {label: 'Band untere Marke', data: forecast[1], borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, fill: false, tension: .2},
-                        {label: 'Prognose (Vorhersagemodell)', data: forecast[2], borderColor: '#1298b2', borderWidth: 2, borderDash: [7, 5], tension: .2, pointRadius: 0},
-                        {label: 'Prognose (Wochenmodell)', data: forecast[3], borderColor: '#d97706', borderWidth: 2, borderDash: [2, 3], tension: 0, pointRadius: 4},
+                        {label: 'Prognose (Vorhersagemodell)', data: forecast[2], borderColor: '#ec5146', borderWidth: 2, borderDash: [7, 5], tension: .2, pointRadius: 0},
+                        {label: 'Prognose (Wochenmodell)', data: forecast[3], borderColor: '#ec5146', borderWidth: 2, borderDash: [2, 3], tension: 0, pointRadius: 4},
                         // The measured prices of the forecast days: the history
                         // line continues into the prediction instead of stopping
-                        // at the origin, so both can be compared in one view.
-                        {label: 'Tatsächlich gemessen', data: forecast[4], borderColor: '#1f2933', borderWidth: 2, tension: .2, pointRadius: 3},
+                        // at the origin, so both can be compared in one view -
+                        // drawn in the same green as the history for that reason.
+                        {label: 'Tatsächlich gemessen', data: forecast[4], borderColor: '#38f75c', borderWidth: 2, tension: .15, pointRadius: 3, pointHoverRadius: 4, spanGaps: true, fill: false, yAxisID: 'y'},
                     ],
                 },
                 options: {
@@ -780,7 +951,15 @@
                             },
                         },
                         tooltip: {callbacks: {
-                            label: (item) => `${item.dataset.label}: ${item.parsed.y === null ? 'kein Wert' : fmt(item.parsed.y) + ' CHF/100 l'}`,
+                            // the axis only shows months, so the tooltip carries
+                            // the exact date
+                            title: (items) => formatDate(items[0].label),
+                            label: (item) => {
+                                const index = item.dataset.yAxisID === 'y1';
+                                const value = item.parsed.y;
+                                if (value === null) return `${item.dataset.label}: kein Wert`;
+                                return `${item.dataset.label}: ${fmt(value, index ? 1 : 2)}${index ? '' : ' CHF/100 l'}`;
+                            },
                             // combined tooltip: the Rhine level of the same date
                             footer: (items) => levelFooter(items[0].label),
                         },
@@ -790,13 +969,25 @@
                         },
                     },
                     scales: {
-                        x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},
-                        y: {ticks: {font: {size: 10}, callback: (v) => `${v} CHF`}},
+                        x: {ticks: monthTicks(dates), grid: {display: false}},
+                        y: {
+                            position: 'left',
+                            ticks: {font: {size: 10}, callback: (v) => `${v} CHF`},
+                            title: {display: true, text: 'CHF/100 l', font: {size: 10}},
+                        },
+                        y1: {
+                            position: 'right',
+                            beginAtZero: true,
+                            ticks: {font: {size: 10}},
+                            grid: {drawOnChartArea: false},
+                            title: {display: true, text: 'Nachfrageindex', font: {size: 10}},
+                        },
                     },
                 },
                 plugins: [crosshairPlugin, todayPlugin],
             });
             reveal('priceChart', 'priceSkeleton');
+            updateReadout();
         }
 
         function levelFooter(date) {
@@ -892,11 +1083,11 @@
                 data: {
                     labels: dates,
                     datasets: [
-                        {label: 'Basel-Rheinhalle', data: series[0], borderColor: '#0b7285', borderWidth: 2, tension: .2, pointRadius: 0},
-                        {label: 'Kaub', data: series[1], borderColor: '#e8590c', borderWidth: 2, tension: .2, pointRadius: 0},
-                        {label: 'Engstelle (kleinster Pegel)', data: series[2], borderColor: '#1f2933', borderWidth: 2, tension: .2, pointRadius: 0},
-                        {label: `Marke Basel ${rheinThresholds.basel_cm} cm`, data: series[3], borderColor: '#0b7285', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
-                        {label: `Marke Kaub ${rheinThresholds.kaub_cm} cm`, data: series[4], borderColor: '#e8590c', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
+                        {label: 'Basel-Rheinhalle', data: series[0], borderColor: '#066aab', borderWidth: 2, tension: .2, pointRadius: 0},
+                        {label: 'Kaub', data: series[1], borderColor: '#ec5146', borderWidth: 2, tension: .2, pointRadius: 0},
+                        {label: 'Engstelle (kleinster Pegel)', data: series[2], borderColor: '#222f3e', borderWidth: 2, tension: .2, pointRadius: 0},
+                        {label: `Marke Basel ${rheinThresholds.basel_cm} cm`, data: series[3], borderColor: '#066aab', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
+                        {label: `Marke Kaub ${rheinThresholds.kaub_cm} cm`, data: series[4], borderColor: '#ec5146', borderWidth: 1, borderDash: [6, 4], pointRadius: 0},
                     ],
                 },
                 options: {
@@ -911,7 +1102,7 @@
                         }},
                     },
                     scales: {
-                        x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},
+                        x: {ticks: monthTicks(dates), grid: {display: false}},
                         y: {ticks: {font: {size: 10}, callback: (v) => `${v} cm`}},
                     },
                 },
@@ -941,20 +1132,25 @@
             cargoChart = new Chart(document.getElementById('cargoChart'), {
                 type: 'bar',
                 data: {
-                    labels: months,
+                    // same month-only axis as the time charts; the tooltip keeps
+                    // the full reporting month
+                    labels: months.map((m) => monthLabel(`${m}-01`)),
                     datasets: [
-                        {label: 'Mineralöl Zufuhr (Gruppe 07)', data: oil, backgroundColor: '#0b7285'},
-                        {label: 'Heizöl, Diesel, Gas (07.23)', data: cargo.heating_oil_zufuhr, backgroundColor: '#f08c00'},
+                        {label: 'Mineralöl Zufuhr (Gruppe 07)', data: oil, backgroundColor: '#066aab'},
+                        {label: 'Heizöl, Diesel, Gas (07.23)', data: cargo.heating_oil_zufuhr, backgroundColor: '#38f75c'},
                     ],
                 },
                 options: {
                     maintainAspectRatio: false,
                     plugins: {
                         legend: {labels: {font: {size: 11}, boxWidth: 12}},
-                        tooltip: {callbacks: {label: (item) => `${item.dataset.label}: ${fmtInt(item.parsed.y)} t`}},
+                        tooltip: {callbacks: {
+                            title: (items) => months[items[0].dataIndex],
+                            label: (item) => `${item.dataset.label}: ${fmtInt(item.parsed.y)} t`,
+                        }},
                     },
                     scales: {
-                        x: {ticks: {maxTicksLimit: 12, font: {size: 10}}},
+                        x: {ticks: {autoSkip: true, maxTicksLimit: 12, maxRotation: 0, font: {size: 10}}},
                         y: {ticks: {font: {size: 10}, callback: (v) => `${v} t`}},
                     },
                 },
@@ -1197,6 +1393,7 @@
             renderRheinStats(payload.snapshot || null);
             renderRheinChart();
             renderCargoChart(cargoData);
+            updateReadout();
             updateTimeNote();
         }
 

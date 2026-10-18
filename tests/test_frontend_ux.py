@@ -162,8 +162,93 @@ def test_measured_prices_run_into_the_forecast_region(page):
     # tooltip with "kein Wert"
     assert "item.dataset.label === 'Tatsächlich gemessen' && item.parsed.y === null" in chart
     # the update path writes every forecast array, so the new series keeps its
-    # data when the timeframe or the forecast changes
-    assert "forecast.forEach((values, i) => { priceChart.data.datasets[2 + i].data = values; });" in chart
+    # data when the timeframe or the forecast changes (the three history series
+    # come first, then the five forecast arrays)
+    assert "forecast.forEach((values, i) => { priceChart.data.datasets[3 + i].data = values; });" in chart
+
+
+def test_measured_history_is_one_solid_line_of_every_day(page):
+    """The past until today must read as the real daily price: a solid line and
+    every single day of the series - no dotted history, no sampled subset."""
+    chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
+    price_line = chart[chart.index("{label: 'Preis (gemessen)'"): chart.index("{label: '7-Tage-Mittel'")]
+    assert "borderDash" not in price_line
+    assert "data: history[0]" in price_line
+    assert "spanGaps: true" in price_line
+    # the arrays handed to the chart are the raw slices of the daily series
+    assert "pad(priceData.price.slice(start))" in chart
+    assert "pad(priceMean7.slice(start))" in chart
+    # the old sampler that dropped days out of long windows must stay removed
+    assert "thinIndices" not in page
+    # the measured days of the forecast window are drawn in the same green, so
+    # history and measurement are one line and not two competing ones
+    measured_line = chart[chart.index("{label: 'Tatsächlich gemessen'"): chart.index("],\n                },\n                options:")]
+    assert "borderColor: '#38f75c'" in measured_line
+    assert "borderDash" not in measured_line
+
+
+def test_demand_index_is_a_series_of_its_own(page):
+    """The Nachfrageindex belongs back into the price chart, on its own axis."""
+    chart = page[page.index("function renderPriceChart"): page.index("function levelFooter")]
+    assert "{label: 'Nachfrageindex', data: history[2]" in chart
+    assert "yAxisID: 'y1'" in chart
+    assert "y1: {" in chart
+    # a second grid over the price grid would make the chart unreadable
+    assert "grid: {drawOnChartArea: false}" in chart
+    # the index is not a price: the tooltip must not label it CHF/100 l
+    assert "item.dataset.yAxisID === 'y1'" in chart
+
+
+def test_x_axis_is_labelled_by_month(page):
+    """Like heizoel24.ch: the axis names the months, not a date every few ticks."""
+    body = page[page.index("function monthTicks"): page.index("function formatDate")]
+    assert "autoSkip: false" in body
+    assert "return monthLabel(label)" in body
+    # long windows would overlap, so every n-th month gets a label and January
+    # always does - the year is never lost
+    assert "Math.ceil(months.length / maxLabels)" in body
+    assert "if (starts.get(month) !== index) return ''" in body
+    assert "MONTH_NAMES = ['Jan', 'Feb', 'Mär'" in page
+    assert "month === 1 ? `${name} ${String(dateStr).slice(0, 4)}` : name" in page
+    for chart_name in ("function renderPriceChart", "function renderRheinChart"):
+        chart = page[page.index(chart_name): page.index(chart_name) + 6000]
+        assert "x: {ticks: monthTicks(dates)" in chart
+    # the exact date is not lost, it moves into the tooltip
+    assert "title: (items) => formatDate(items[0].label)" in page
+
+
+def test_readout_box_shows_price_and_date(page):
+    """The box above the chart answers "what price, which date?" without hovering."""
+    assert '<div class="readout" id="priceReadout" aria-live="polite">' in page
+    body = page[page.index("function updateReadout"): page.index("function renderPriceChart")]
+    assert "formatDate(date)" in body
+    assert "latestMeasuredDate()" in body
+    assert "letzte Messung" in body
+    assert "valueAt(priceData.dates, priceData.demand, date)" in body
+    # hovering the chart drives the same box
+    hover = page[page.index("function setHover"): page.index("function handleHover")]
+    assert "updateReadout()" in hover
+
+
+def test_crosshair_is_a_thin_grey_line(page):
+    """heizoel24.ch marks the hovered day with a thin grey line, not a coloured
+    bar - the price line has to stay the loudest thing in the chart."""
+    body = page[page.index("const crosshairPlugin"): page.index("const todayPlugin")]
+    assert "ctx.lineWidth = 1" in body
+    assert "rgba(92, 107, 122" in body
+    assert "setLineDash" not in body
+
+
+def test_page_carries_the_green_eagle_brand(page):
+    """Logo and favicon are static/logo.svg; the palette is the brand palette of
+    greeneagle.cloud (logo green, brand blue, alert red, ink from the logo)."""
+    assert '<link rel="icon" type="image/svg+xml" href="/static/logo.svg">' in page
+    assert '<img class="brand-logo" src="/static/logo.svg" alt="greenEagle.cloud-Logo">' in page
+    assert "greenEagle.cloud" in page
+    for token in ("--green: #38f75c", "--accent: #066aab", "--red: #ec5146", "--ink: #222f3e"):
+        assert token in page
+    # the logo has to ship inside the frontend image, otherwise both 404
+    assert (REPO_ROOT / "src" / "frontend" / "static" / "logo.svg").exists()
 
 
 def test_forecast_note_shows_prediction_against_measurement(page):
