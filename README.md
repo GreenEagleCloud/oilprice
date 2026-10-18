@@ -503,9 +503,9 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.4
-ghcr.io/greeneaglecloud/oilprice-inference:1.5
-ghcr.io/greeneaglecloud/oilprice-pipelines:1.8
+ghcr.io/greeneaglecloud/oilprice-frontend:1.5
+ghcr.io/greeneaglecloud/oilprice-inference:1.6
+ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```
 
 Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
