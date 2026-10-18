@@ -17,10 +17,17 @@ POST /predict
    registry is not reachable.
 4. Response contains the prediction AND all features that led to it (8.4).
 
+GET /rhein
+    Current Rhine gauge snapshot (Basel-Rheinhalle + Kaub bottleneck) written by
+    src/collect_rhein_levels.py to s3://oilprice-features/raw/rhein_snapshot.json
+    (local fallback data/rhein/rhein_snapshot.json). Gauges are the only Rhine
+    data that is realtime; the cargo bulletins are lagged by 4-7 weeks.
+
 Run:
     python src/inference/hw_app.py
 """
 
+import json
 import os
 import sys
 
@@ -491,6 +498,40 @@ def predict():
     if passed_features:
         result["passed_features"] = passed_features
     return jsonify(result)
+
+
+def _rhein_snapshot() -> dict:
+    """Current Rhine gauge snapshot written by src/collect_rhein_levels.py.
+
+    Read-only view of the realtime gauge situation (Basel-Rheinhalle and the
+    Kaub bottleneck). Only the gauges are realtime data: the Port-of-Switzerland
+    cargo figures are published 4-7 weeks after the reporting month and are
+    therefore historical/lagged features, never an input to a live prediction.
+    """
+    bucket, key = "oilprice-features", "raw/rhein_snapshot.json"
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        try:
+            import boto3
+
+            body = boto3.client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
+            return json.loads(body.decode("utf-8"))
+        except Exception as e:
+            print(f"s3://{bucket}/{key} not available: {e}")
+
+    local = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "data", "rhein", "rhein_snapshot.json")
+    )
+    with open(local, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+@app.route("/rhein", methods=["GET"])
+def rhein():
+    """Realtime Rhine gauge snapshot (Basel + Kaub bottleneck + low-water flag)."""
+    try:
+        return jsonify(_rhein_snapshot())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
 
 
 @app.route("/health", methods=["GET"])

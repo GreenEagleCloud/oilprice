@@ -131,6 +131,24 @@
         th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
         th { color: var(--muted); font-weight: 600; }
         td.val { font-variant-numeric: tabular-nums; text-align: right; }
+        .rhein-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+        .stat {
+            flex: 1 1 150px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px 12px;
+            background: #fbfcfe;
+        }
+        .stat-label {
+            color: var(--muted);
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .stat-value { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .stat-note { color: var(--muted); font-size: 0.75rem; }
+        .stat.alert { border-color: #fecaca; background: #fef2f2; }
+        .stat.alert .stat-value { color: var(--error); }
         .error {
             margin-top: 16px;
             display: none;
@@ -175,6 +193,31 @@
             <div class="history-hint" id="historyHint">Historische Preise werden geladen&hellip;</div>
         </div>
         <p class="hint">Tagesdurchschnittspreis (CHF/100l) und Nachfrageindex von heizoel24.ch.</p>
+    </div>
+
+    <div class="card" id="rheinCard">
+        <div class="chart-head">
+            <h2>Rhein-Pegel: Basel-Rheinhalle &amp; Engstelle Kaub</h2>
+            <span class="latest" id="rheinLatest"></span>
+            <select class="tf-select" id="rheinTimeframe" aria-label="Zeitraum Pegel">
+                <option value="30">1 Monat</option>
+                <option value="90">3 Monate</option>
+                <option value="180" selected>6 Monate</option>
+                <option value="365">1 Jahr</option>
+            </select>
+        </div>
+        <div class="rhein-stats" id="rheinStats"></div>
+        <div class="history-box">
+            <canvas id="rheinChart" height="240"></canvas>
+            <div class="history-hint" id="rheinHint">Pegeldaten werden geladen&hellip;</div>
+        </div>
+        <p class="hint">Tagesminimum der Pegel in cm (massgebend fuer die zulassige Abladetiefe eines Tankers). Die <strong>Engstelle</strong> ist der tiefere Wert beider Stationen: Ein Tanker auf dem Weg nach Basel muss Kaub (Rhein-km 546) passieren. Niedrigwasser: Basel unter 350 cm, Kaub unter 30 cm. Quelle: data.bs.ch, WSV Pegelonline, LINDAS/BAFU.</p>
+
+        <h3>Fracht der Schweizer Rheinhaefen: Mineraloel (Tonnen)</h3>
+        <div class="chart-box">
+            <canvas id="cargoChart" height="200"></canvas>
+        </div>
+        <p class="hint" id="cargoHint"></p>
     </div>
 
     <div class="card">
@@ -353,6 +396,280 @@
 
     document.getElementById('timeframe').addEventListener('change', renderHistory);
     loadHistory();
+
+    // ---------- Rhein-Pegel & Fracht ----------
+    let rheinData = null;
+    let rheinChart = null;
+    let cargoChart = null;
+
+    function fmtTonnes(v) {
+        if (v === null || v === undefined) return null;
+        return Number(v).toLocaleString('de-CH', { maximumFractionDigits: 0 });
+    }
+
+    function addStat(label, value, note, alert) {
+        const div = document.createElement('div');
+        div.className = 'stat' + (alert ? ' alert' : '');
+        const labelEl = document.createElement('div');
+        labelEl.className = 'stat-label';
+        labelEl.textContent = label;
+        const valueEl = document.createElement('div');
+        valueEl.className = 'stat-value';
+        valueEl.textContent = value;
+        div.appendChild(labelEl);
+        div.appendChild(valueEl);
+        if (note) {
+            const noteEl = document.createElement('div');
+            noteEl.className = 'stat-note';
+            noteEl.textContent = note;
+            div.appendChild(noteEl);
+        }
+        document.getElementById('rheinStats').appendChild(div);
+    }
+
+    function renderRheinStats() {
+        document.getElementById('rheinStats').innerHTML = '';
+        const thresholds = rheinData.thresholds || {};
+        const snap = rheinData.snapshot || {};
+        const stations = snap.stations || {};
+        const basel = stations.basel || {};
+        const kaub = stations.kaub || {};
+
+        const levelOf = (s) => (s.wsv_level_cm != null
+            ? Number(s.wsv_level_cm)
+            : (s.bs_ch_level_cm != null ? Number(s.bs_ch_level_cm) : null));
+        const stampOf = (s) => {
+            const ts = s.wsv_timestamp_utc || s.bs_ch_timestamp_utc || s.lindas_timestamp_utc || '';
+            return ts ? ' · ' + ts.slice(11, 16) + ' UTC' : '';
+        };
+        const thresholdOf = (s, fallback) => (s.low_water_cm != null ? Number(s.low_water_cm) : Number(fallback));
+        const cm = (v) => (v === null || v === undefined ? '—' : Math.round(v) + ' cm');
+
+        const baselLevel = levelOf(basel);
+        const kaubLevel = levelOf(kaub);
+        const baselLow = thresholdOf(basel, thresholds.basel_cm);
+        const kaubLow = thresholdOf(kaub, thresholds.kaub_cm);
+        const isLow = snap.low_water_flag === 1;
+
+        addStat('Basel-Rheinhalle', cm(baselLevel),
+            'Niedrigwasser < ' + Math.round(baselLow) + ' cm' + stampOf(basel),
+            baselLevel !== null && baselLevel < baselLow);
+        addStat('Kaub (Engstelle)', cm(kaubLevel),
+            'Niedrigwasser < ' + Math.round(kaubLow) + ' cm' + stampOf(kaub),
+            kaubLevel !== null && kaubLevel < kaubLow);
+
+        const stationNames = { kaub: 'Kaub', basel: 'Basel' };
+        addStat('Engstelle: ' + (stationNames[snap.bottleneck_station] || 'Engstelle'),
+            cm(snap.bottleneck_level_cm), 'limitiert die Zuladung des Tankers', isLow);
+        addStat('Niedrigwasser-Status', isLow ? 'Niedrigwasser' : 'normal',
+            snap.collected_at_utc ? 'Stand ' + snap.collected_at_utc.replace('T', ' ').slice(0, 16) + ' UTC' : '',
+            isLow);
+
+        const dates = ((rheinData.levels || {}).dates) || [];
+        document.getElementById('rheinLatest').textContent =
+            dates.length ? 'Letzter Messtag: ' + dates[dates.length - 1] : '';
+    }
+
+    function renderRheinChart() {
+        const levels = rheinData.levels || {};
+        const dates = levels.dates || [];
+        if (!dates.length) return;
+
+        const tf = parseInt(document.getElementById('rheinTimeframe').value, 10);
+        const end = new Date(dates[dates.length - 1]);
+        const from = new Date(end);
+        from.setDate(from.getDate() - tf);
+        let start = 0;
+        while (start < dates.length && new Date(dates[start]) < from) start++;
+
+        const pick = (arr) => arr.slice(start);
+        const labels = pick(dates);
+        const thresholds = rheinData.thresholds || {};
+        const flat = (v) => labels.map(function () { return v; });
+
+        if (rheinChart) rheinChart.destroy();
+        const ctx = document.getElementById('rheinChart').getContext('2d');
+        rheinChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Engstelle (min Basel/Kaub)',
+                        data: pick(levels.bottleneck),
+                        borderColor: '#066aab',
+                        backgroundColor: 'rgba(6,106,171,0.10)',
+                        borderWidth: 2.5,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        tension: 0.15,
+                        spanGaps: true,
+                        fill: true
+                    },
+                    {
+                        label: 'Basel-Rheinhalle',
+                        data: pick(levels.basel),
+                        borderColor: '#38f75c',
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        tension: 0.15,
+                        spanGaps: true,
+                        fill: false
+                    },
+                    {
+                        label: 'Kaub',
+                        data: pick(levels.kaub),
+                        borderColor: '#f0a202',
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        tension: 0.15,
+                        spanGaps: true,
+                        fill: false
+                    },
+                    {
+                        label: 'Marke Basel (' + Math.round(thresholds.basel_cm) + ' cm)',
+                        data: flat(thresholds.basel_cm),
+                        borderColor: 'rgba(236,81,70,0.7)',
+                        borderWidth: 1,
+                        borderDash: [6, 6],
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0
+                    },
+                    {
+                        label: 'Marke Kaub (' + Math.round(thresholds.kaub_cm) + ' cm)',
+                        data: flat(thresholds.kaub_cm),
+                        borderColor: 'rgba(236,81,70,0.45)',
+                        borderWidth: 1,
+                        borderDash: [3, 5],
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function (item) {
+                                const v = item.parsed.y;
+                                return (v === null || v === undefined)
+                                    ? item.dataset.label + ': -'
+                                    : item.dataset.label + ': ' + Math.round(v) + ' cm';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 }, grid: { display: false } },
+                    y: { beginAtZero: false, title: { display: true, text: 'Pegel (cm)' } }
+                }
+            }
+        });
+    }
+
+    function renderCargoChart() {
+        const cargo = rheinData.cargo || {};
+        const months = cargo.months || [];
+        if (!months.length) return;
+
+        if (cargoChart) cargoChart.destroy();
+        const ctx = document.getElementById('cargoChart').getContext('2d');
+        cargoChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: months,
+                datasets: [
+                    {
+                        label: 'Mineralöl Zufuhr (Gruppe 07)',
+                        data: cargo.oil_zufuhr,
+                        backgroundColor: 'rgba(6,106,171,0.75)'
+                    },
+                    {
+                        label: 'Heizöl/Diesel/Gas Zufuhr (07.23)',
+                        data: cargo.heating_oil_zufuhr,
+                        backgroundColor: 'rgba(56,247,92,0.85)'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function (item) {
+                                const v = item.parsed.y;
+                                return (v === null || v === undefined)
+                                    ? item.dataset.label + ': -'
+                                    : item.dataset.label + ': ' + fmtTonnes(v) + ' t';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { autoSkip: true, maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+                    y: { beginAtZero: true, title: { display: true, text: 'Tonnen' } }
+                }
+            }
+        });
+
+        const latest = cargo.latest_month
+            ? 'Letzter Bericht: Berichtsmonat ' + cargo.latest_month + ' (publiziert ' + cargo.latest_published + '). '
+            : '';
+        document.getElementById('cargoHint').textContent = latest
+            + 'Zufuhr in Tonnen, Schweizer Rheinhäfen (Port of Switzerland), Warengattungen nach NST-2007. '
+            + 'Die Bulletins erscheinen 4–7 Wochen nach dem Berichtsmonat - die Fracht ist damit eine '
+            + 'historische Grösse und wird nie als aktueller Modell-Eingabe verwendet.';
+    }
+
+    function loadRhein() {
+        fetch('/api/rhein')
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (data) {
+                rheinData = data;
+                const hint = document.getElementById('rheinHint');
+                const levels = data.levels || {};
+                const cargo = data.cargo || {};
+
+                if (data.snapshot) renderRheinStats();
+                if (cargo.months && cargo.months.length) renderCargoChart();
+                else document.getElementById('cargoHint').textContent =
+                    'Frachtdaten sind derzeit nicht verfügbar.';
+
+                if (levels.dates && levels.dates.length) {
+                    renderRheinChart();
+                    hint.style.display = 'none';
+                } else {
+                    hint.textContent = 'Pegeldaten sind derzeit nicht verfügbar.';
+                    if (!data.snapshot) {
+                        addStat('Rheindaten', 'nicht verfügbar',
+                            (data.errors && Object.values(data.errors)[0]) || '', true);
+                    }
+                }
+            })
+            .catch(function (err) {
+                document.getElementById('rheinHint').textContent =
+                    'Pegeldaten konnten nicht geladen werden (' + (err.message || err) + ')';
+                document.getElementById('cargoHint').textContent =
+                    'Frachtdaten konnten nicht geladen werden.';
+            });
+    }
+
+    document.getElementById('rheinTimeframe').addEventListener('change', function () {
+        if (rheinData) renderRheinChart();
+    });
+    loadRhein();
 
     // ---------- Prognose-Formular ----------
     let chart = null;

@@ -13,6 +13,11 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 | `data/heizoel24_heizoel_daily_ch_full.csv` | Rohdaten: `date`, `price`, `demand` (2003–2026) |
 | `data/heizoel24_heizoel_daily_ch_5y.csv` | gleicher Datensatz, letzte 5 Jahre |
 | `data/features/heizoel24_features.csv` | Features + Labels (generiert von Notebook 04 / `src/hw_feature_pipeline.py`) |
+| `data/rhein/rhein_levels.csv` | Rhein-Pegel täglich (Basel-Rheinhalle + Kaub), Quelle: `s3://oilprice-features/raw/rhein_levels.csv` |
+| `data/rhein/rhein_snapshot.json` | aktueller Pegel + Engstellen-Berechnung (Inferenz-Eingang) |
+| `data/rhein/rhein_cargo.csv` | Monats-Fracht der Schweizer Rheinhäfen nach Warengattung (PDF-Bulletins) |
+| `data/features/rhein_level_features.csv` | tägliche Pegel-Features (`src/hw_rhein_feature_pipeline.py`) |
+| `data/features/rhein_cargo_features.csv` | monatliche Fracht-Features (MoM/YoY) |
 
 ## Notebooks (Übungsfluss)
 
@@ -39,6 +44,60 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 * `hw_training_pipeline.py` – Training aus der wöchentlichen Feature View → MLflow + Hopsworks Model Registry (+ S3-Export)
 * `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View → MLflow + Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export)
 * `inference/hw_app.py` – Flask-App: zuerst wöchentlicher Feature Vector; bei fehlendem/futurischem Datum Fallback auf Forward-Feature-View und `oil_price_forward_model`
+* `rhein_config.py` – Stationen, Quellen, Schwellen und Feature-Listen für die Rhein-Daten
+* `collect_rhein_levels.py` – Pegel Basel + Kaub (data.bs.ch, WSV, BAFU/LINDAS) → `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`
+* `collect_rhein_cargo.py` – Monats-Bulletins der Port of Switzerland (PDF) → `raw/rhein_cargo.csv`
+* `hw_rhein_feature_pipeline.py` – Feature Groups `rhein_level` (täglich, online-enabled) und `rhein_cargo` (monatlich) + Feature Views
+
+## Rhein-Features (Pegel + Fracht)
+
+**Warum Basel *und* Kaub:** Ein Tanker, der in Rotterdam lädt und nach Basel
+fährt, muss alle Pegel der Strecke passieren; die Ladung richtet sich nach dem
+**niedrigsten** Pegel unterwegs. Die Mittelrhein-Engstelle Kaub (Rhein-km 546)
+ist praktisch immer der limitierende Punkt, deshalb wird
+`bottleneck_level_cm = min(basel_level_cm, kaub_level_cm)` gebildet.
+
+| Quelle | Inhalt | Abdeckung |
+| --- | --- | --- |
+| `data.bs.ch` Dataset 100089 | Basel-Rheinhalle, 5-Minuten-Werte `pegelhoehe` [cm] und `abfluss` [m³/s], Zeitstempel UTC | seit 2020-06-22 |
+| WSV Pegelonline (REST v2) | Basel (`94f6eff1-…`) und Kaub (`1d26e504-…`), `W` [cm], Kaub zusätzlich `Q` [m³/s]; Local Time → UTC | nur letzte ~30 Tage (Kaub ist nur hier verfügbar) |
+| BAFU / LINDAS | aktuelle amtliche Observation Station 2289 (Basel), `waterLevel` in **m ü. M.** (nicht direkt vergleichbar mit cm) | Snapshot / Cross-check |
+| Port of Switzerland | Monats-Bulletin (PDF) „Schiffsumschlag nach Warengattung in Tonnen“ via WordPress-Media-API | 2011–2026, Publikationsverzug 4–7 Wochen |
+
+**Feature Groups**
+
+* `rhein_level` – Primary Key `date`, Event Time `date`, online-enabled. Tägliche
+  **Minima** der Pegel (relevant für die Tiefgangsbegrenzung), 7-Tage-Min/-Mittel,
+  30-Tage-Z-Score, 30-Tage-Niederwasser-Tage, 7-Tage-Trend, Abfluss,
+  `bottleneck_level_cm`, `rhein_low_water_flag` (Basel < 350 cm **oder** Kaub < 30 cm).
+* `rhein_cargo` – Primary Key `month`, Event Time `published_date`. Öl-Gruppe 07
+  (NST-2007) bzw. Gruppe 3 (Legacy-Klassifikation) sowie die Detailgruppen
+  07.21 Motorbenzin, 07.22 Petroleum/Turbinenkraftstoff, **07.23 Gasöl/Dieselöl/
+  leichtes Heizöl**, 07.25 Schmieröle – jeweils Zufuhr/Abfuhr in Tonnen, dazu
+  MoM- und YoY-Änderung und YTD.
+
+**Point-in-Time-Regeln (wichtig für Training und Serving)**
+
+* Frachtwerte erscheinen 4–7 Wochen nach dem Berichtsmonat. `published_date` ist
+  deshalb der Event Time; ein Training darf `rhein_cargo` nur mit Verzögerung
+  (≥ 49 Tage) auf die Preis-Tabelle joinen — nie als „heutigen“ Wert.
+* Für die **Inferenz** ist nur der Pegel ein Echtzeit-Feature (`raw/rhein_snapshot.json`
+  → `passed_features`); die Fracht-Features sind ausschliesslich Historie.
+* Kaub ist historisch nicht verfügbar (WSV liefert nur ~30 Tage). Der CronJob
+  `collect-rhein` sammelt Kaub täglich weiter an, sodass die Historie mit der
+  Zeit wächst; bis dahin fällt `bottleneck_level_cm` auf Basel zurück (Obergrenze).
+* Bulletins werden in der Punkt-in-Time-Sicht nicht revidiert: bei Duplikaten
+  gewinnt die zuerst publizierte Ausgabe (`merge_cargo`). Bereits abgerufene
+  PDFs werden in `raw/rhein_bulletins_parsed.json` gemerkt; `--all` baut den
+  Bestand komplett neu auf.
+
+**Tests:** `tests/test_rhein_cargo.py`, `tests/test_rhein_levels.py`,
+`tests/test_rhein_features.py` (Fixture-basiert, ohne Netzwerk):
+
+```bash
+python -m pytest tests/ -q
+```
+
 
 ## Hopsworks-Setup
 
@@ -47,8 +106,11 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 2. Pipelines in dieser Reihenfolge ausführen (Repo-Root):
 
    ```bash
+   python src/collect_rhein_levels.py --bootstrap   # Rhein-Pegel (einmalig) 
+   python src/collect_rhein_cargo.py --all          # Rhein-Fracht (einmalig)
    python src/hw_feature_pipeline.py          # Wochen-Feature Group + Feature View
    python src/hw_forward_feature_pipeline.py  # Forward-Feature Group + Feature View
+   python src/hw_rhein_feature_pipeline.py    # rhein_level + rhein_cargo Feature Groups
    python src/hw_training_pipeline.py         # Wochenmodell trainieren + registrieren
    python src/hw_forward_training_pipeline.py # Forward-Modell trainieren + registrieren
    python src/inference/hw_app.py             # Flask-App (Port 5000)
@@ -129,6 +191,84 @@ curl -X POST http://localhost:5000/predict \
 * `model` – `weekly` für vorhandene Feature-Store-Daten, `forward_forecast`
   für zukünftige Zieltermine
 
+### Rhein-Pegel live (`GET /rhein`)
+
+```bash
+curl http://localhost:5000/rhein
+```
+
+```json
+{
+  "collected_at_utc": "2026-10-18T03:11:01+00:00",
+  "stations": {
+    "basel": {"wsv_level_cm": 484.0, "bs_ch_level_cm": 483.3, "lindas_level_m_asl": 244.835},
+    "kaub": {"wsv_level_cm": 10.0, "wsv_discharge_m3s": 479.0}
+  },
+  "bottleneck_station": "kaub",
+  "bottleneck_level_cm": 10.0,
+  "low_water_flag": 1
+}
+```
+
+Der Snapshot (`s3://oilprice-features/raw/rhein_snapshot.json`, lokal
+`data/rhein/rhein_snapshot.json`) ist die Echtzeit-Quelle für die Pegel-Features.
+Die Fracht-Features (`rhein_cargo`) sind bewusst **kein** Live-Eingang: sie
+erscheinen 4–7 Wochen nach dem Berichtsmonat.
+
+## Frontend (`src/frontend/`)
+
+Das Frontend (Flask, `src/frontend/app.py`) rendert die Preis-/Nachfrage-
+Geschichte, die Rhein-Daten und die Prognose.
+
+| Route | Zweck |
+|---|---|
+| `GET /` | Seite: Preisdiagramm, Rhein-Pegel + Fracht, Prognose-Formular |
+| `GET /api/history` | Preis-/Nachfrage-Historie (S3 zuerst, gebündelte CSV als Fallback) |
+| `GET /api/rhein` | Pegel-Snapshot, Pegel-Historie (365 Tage), Monats-Fracht (36 Monate) |
+| `POST /predict` | Proxy zum `inference-service` (`/predict`) |
+
+`/api/rhein` liest dieselben S3-Objekte wie die Collector-CronJobs
+(`raw/rhein_snapshot.json`, `raw/rhein_levels.csv`, `raw/rhein_cargo.csv`) und
+fällt auf die in das Image eingebundenen Dateien unter `/app/data/rhein/`
+zurück (`Dockerfile.frontend` kopiert `data/`). Antwort (Auszug):
+
+```json
+{
+  "source": "s3",
+  "thresholds": {"basel_cm": 350.0, "kaub_cm": 30.0},
+  "snapshot": {"bottleneck_station": "kaub", "bottleneck_level_cm": 10.0, "low_water_flag": 1},
+  "levels": {"dates": ["2026-10-18"], "basel": [478.0], "kaub": [10.0],
+             "bottleneck": [10.0], "low_water_flag": [1]},
+  "cargo": {"months": ["2026-08"], "oil_zufuhr": [38791.0],
+            "heating_oil_zufuhr": [19575.0],
+            "latest_month": "2026-08", "latest_published": "2026-09-14"}
+}
+```
+
+Dargestellt werden:
+
+* **Pegel-Kacheln** – aktueller Wert Basel-Rheinhalle und Kaub, Engstelle
+  (`min(Basel, Kaub)`) und Niedrigwasser-Status. Eine Kachel wird rot, sobald
+  eine Station unter ihrer Marke liegt (Basel 350 cm, Kaub 30 cm).
+* **Pegel-Diagramm** – Tagesminimum je Station plus Engstelle und zwei
+  gestrichelte Niedrigwasser-Marken; Zeitraum 1/3/6/12 Monate.
+* **Fracht-Diagramm** – monatliche Mineralöl-Zufuhr (Gruppe 07) und die
+  Heizöl-/Diesel-/Gas-Position 07.23 in Tonnen. Der Hinweis nennt Berichtsmonat
+  und Publikationsdatum: Die Fracht ist eine historische Grösse und wird nie als
+  Live-Eingabe der Prognose verwendet.
+
+Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
+`src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
+`src/frontend/` und kann `src/rhein_config.py` nicht importieren.
+`tests/test_frontend_rhein.py` prüft deshalb, dass die Schwellen mit
+`src/rhein_config.py` übereinstimmen und dass Snapshot, Pegel- und Frachtserie
+konsistent sind.
+
+Hinweis: Der Fallback `/app/data/rhein/` existiert im Image nur, wenn
+`data/rhein/` committed ist (`Dockerfile.frontend` kopiert `data/` in den
+Build-Kontext). Im Cluster liest das Frontend die Dateien aus S3, der Fallback
+dient nur für lokale Tests und für den Fall, dass S3 nicht erreichbar ist.
+
 ## Wichtige Design-Entscheidungen
 
 * **Feature View** (`heizoel24_weekly`) selektiert nur die 12 Features +
@@ -160,9 +300,9 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.3
+ghcr.io/greeneaglecloud/oilprice-frontend:1.4
 ghcr.io/greeneaglecloud/oilprice-inference:1.3
-ghcr.io/greeneaglecloud/oilprice-pipelines:1.3
+ghcr.io/greeneaglecloud/oilprice-pipelines:1.4
 ```
 
 Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
@@ -185,6 +325,7 @@ kubectl apply -f k8s/frontend-service.yaml \
   -f k8s/feature-cronjob.yaml \
   -f k8s/training-cronjob.yaml \
   -f k8s/collect-cronjob.yaml \
+  -f k8s/collect-rhein-cronjob.yaml \
   -f k8s/reference-grant.yaml \
   -f k8s/oilprice-httproute.yaml
 

@@ -1,0 +1,30 @@
+{
+  "collected_at_utc": "2026-10-18T03:11:01+00:00",
+  "stations": {
+    "basel": {
+      "name": "Basel-Rheinhalle",
+      "rhine_km": 164.3,
+      "low_water_cm": 350.0,
+      "wsv_level_cm": 484.0,
+      "wsv_timestamp_utc": "2026-10-18T02:50:00+00:00",
+      "bs_ch_level_cm": 483.29999999999984,
+      "bs_ch_discharge_m3s": 378.765,
+      "bs_ch_timestamp_utc": "2026-10-18T03:00:00+00:00",
+      "lindas_level_m_asl": 244.835,
+      "lindas_discharge_m3s": 380.265,
+      "lindas_danger_level": "1",
+      "lindas_timestamp_utc": "2026-10-18T02:50:00+00:00"
+    },
+    "kaub": {
+      "name": "Kaub (Middle-Rhine bottleneck, Rhine-km 546.23)",
+      "rhine_km": 546.23,
+      "low_water_cm": 30.0,
+      "wsv_level_cm": 10.0,
+      "wsv_timestamp_utc": "2026-10-18T03:00:00+00:00",
+      "wsv_discharge_m3s": 479.0
+    }
+  },
+  "bottleneck_station": "kaub",
+  "bottleneck_level_cm": 10.0,
+  "low_water_flag": 1
+}

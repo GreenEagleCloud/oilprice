@@ -38,8 +38,7 @@ https://github.com/GreenEagleCloud/oilprice
 
 ### ✅ 4. Erstellen eines Hopsworks Accounts auf hopsworks.ai
 
-https://eu-west.cloud.hopsworks.ai/p/44166/view
-
+https://eu-west.cloud.hopsworks.ai/p/47232/view
 
 ### 5. Installation der Dependencies (Hopsworks verlangt Python < 3.14)
 
