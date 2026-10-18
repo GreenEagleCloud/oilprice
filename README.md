@@ -356,6 +356,37 @@ Danach liest das Frontend die Rhein-Daten direkt aus S3 (`/api/rhein` meldet
 `"source": "s3"`); der Frontend-Cache (15 min) wird mit
 `kubectl -n oilprice rollout restart deployment/frontend` sofort neu geladen.
 
+Rhine-Feature-Gruppen in Hopsworks (werden vom `feature-pipeline`-CronJob mit
+erzeugt, siehe `src/hw_rhein_feature_pipeline.py`):
+
+| Feature Group                       | Primärkey | Event Time       | Inhalt |
+| ----------------------------------- | --------- | ---------------- | ------ |
+| `rhein_level` v1 (online-enabled)   | `date`    | `date`           | Tagesminimum Basel/Kaub, Engstelle `min(Basel, Kaub)`, Rolling 7d/30d, Z-Score, Niedrigwasser-Tage, `rhein_low_water_flag` |
+| `rhein_cargo` v1                    | `month`   | `published_date` | Tonnen je Warengruppe/Richtung (inkl. 07.23 Gas/Diesel/Heizöl), MoM- und YoY-Änderung, YTD |
+
+Dazu die Feature Views `rhein_level_daily` v1 und `rhein_cargo_monthly` v1.
+Kalendermonate ohne publiziertes Bulletin haben kein `published_date` und werden
+beim Upsert übersprungen – hsfs braucht für den Online-Write pro Primärkey
+genau eine Zeile mit Event Time. Fracht bleibt ein LAG-Feature: sie darf nur mit
+mindestens 49 Tagen Abstand zum Zieltag joined werden, nie als Tagesinformation.
+
+Kontrolle der letzten Pipeline-Läufe:
+
+```bash
+kubectl -n oilprice logs job/feature-pipeline-manual-<NAME> --tail=40 | grep -i rhein
+# rhein_level: 2310 rows 2020-06-22 .. 2026-10-18, Kaub covered for 33 days
+# Feature group 'rhein_level' v1: 2310 rows upserted
+# Feature group 'rhein_cargo' v1: 143 rows upserted
+```
+
+Der Inference-Service stellt denselben Pegel-Snapshot zusätzlich unter `GET
+/rhein` bereit (liest `raw/rhein_snapshot.json` aus S3):
+
+```bash
+kubectl -n oilprice exec deploy/frontend -- \
+  python -c "import urllib.request;print(urllib.request.urlopen('http://inference-service:5000/rhein').read().decode()[:200])"
+```
+
 Verifizierter Live-Test:
 
 ```bash
