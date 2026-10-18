@@ -219,12 +219,14 @@
         .date-btn:hover { background: #eceff3; color: var(--accent); }
         .date-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
         .date-btn svg { width: 20px; height: 20px; }
-        .date-picker {
+        /* .field input would win over a single class, so the picker is named
+           with the same specificity it is fighting against. */
+        .field input.date-picker {
             position: absolute; right: 6px; top: 50%; transform: translateY(-58%);
             width: 38px; height: 38px; margin: 0; padding: 0; border: 0;
             background: transparent; color: transparent; opacity: .01; cursor: pointer;
         }
-        .date-picker::-webkit-calendar-picker-indicator {
+        .field input.date-picker::-webkit-calendar-picker-indicator {
             position: absolute; inset: 0; width: 100%; height: 100%;
             margin: 0; padding: 0; opacity: 1; cursor: pointer;
         }

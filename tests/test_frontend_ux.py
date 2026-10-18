@@ -447,6 +447,11 @@ def test_calendar_button_opens_the_browser_picker(page):
     assert "dateInput.value = formatDate(picker.value);" in body
     # the picker is wired before the page starts loading
     assert page.index("wireDatePicker();") < page.index("startSkeletons();")
+    # the transparent picker must beat the `.field input` rule, otherwise it
+    # covers the text field as a white box of the same width
+    css = page[page.index(".date-btn {"): page.index(".primary-btn {")]
+    assert ".field input.date-picker {" in css
+    assert ".date-picker {" not in css.replace(".field input.date-picker {", "")
 
 
 def test_forecast_is_computed_on_the_first_load(page):
