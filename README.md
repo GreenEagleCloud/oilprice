@@ -479,8 +479,13 @@ Dargestellt werden:
   Der Wochenmodell-Wert ist der Durchschnitt der sieben Tage nach dem
   Ausgangstag und wird auf **jeden** dieser Tage gezeichnet – die rote Linie
   sieht damit aus wie das 7-Tage-Mittel, das sie vorhersagt, und hängt an der
-  schwarzen Mittellinie statt in der Luft zu schweben. `spanGaps: true` hält
-  Vorhersage- und Wochenlinie zu einer Linie verbunden. Die Kurve wird
+  schwarzen Mittellinie statt in der Luft zu schweben. Der Anschlusswert wird
+  aus der **ganzen** Serie gelesen (`priceData.dates`), nicht aus dem
+  Anzeige-Fenster: die Achse ist ein gekürztes Fenster plus Prognosetage, und
+  derselbe Index zeigt dort auf einen Tag aus einem anderen Jahr – dessen Wert
+  (2003: rund 33 CHF) die Prognose sonst unten auf der Nachfragekurve landen
+  lässt. `spanGaps: true` hält Vorhersage- und Wochenlinie zu einer Linie
+  verbunden. Die Kurve wird
   serverseitig gebaut – der Browser bräuchte sonst pro Horizontschritt eine
   eigene `/predict`-Anfrage. Ein 502 des Inferenz-Dienstes bricht die Serie nach
   dem ersten Versuch ab statt neun Timeouts zu produzieren; fehlende Horizonte
