@@ -7,6 +7,8 @@ spec:
   schedule: "0 0 * * *"
   jobTemplate:
     spec:
+      # hard bound: a stuck S3/Hopsworks request must not run into the next cron
+      activeDeadlineSeconds: 3600
       template:
         spec:
           imagePullSecrets:

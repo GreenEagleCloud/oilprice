@@ -7,6 +7,8 @@ spec:
   schedule: "0 1 * * *"
   jobTemplate:
     spec:
+      # hard bound: a stuck Hopsworks login/upsert must not run into the next cron
+      activeDeadlineSeconds: 1800
       template:
         spec:
           imagePullSecrets:

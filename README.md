@@ -498,10 +498,10 @@ kubectl -n oilprice rollout status deployment/inference
 
 Alle Sammler-/Pipeline-Jobs sind gegen Aufhängen geschützt:
 
-- `activeDeadlineSeconds: 1800` auf `collect-daily-prices`, `collect-rhein`,
-  `feature-pipeline` und `training-pipeline` – ein hängender Upstream-Request
-  beendet den Job nach 30 Minuten statt ihn bis zum nächsten Cron-Lauf laufen zu
-  lassen.
+- `activeDeadlineSeconds` auf allen vier CronJobs (`collect-daily-prices` und
+  `collect-rhein` 1800, `feature-pipeline` 3600, `training-pipeline` 1800) – ein
+  hängender Upstream-Request beendet den Job statt ihn bis zum nächsten Cron-Lauf
+  laufen zu lassen.
 - `collect-rhein` führt die drei Quellen (Pegel, Fracht, Kaub-Archiv) unabhängig
   aus (`|| rc=1` statt `&&`): ein LINDAS-502 verhindert nicht mehr das Kaub-
   Archiv, das nur ~30 Tage Historie bei WSV hat – ein verpasster Tag ist verloren.

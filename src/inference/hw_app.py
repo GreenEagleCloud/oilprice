@@ -420,8 +420,13 @@ def _predict_forward(entry_date: pd.Timestamp, passed_features: dict):
         }
 
     model = _load_forward_model()
-    X = _select_model_features(vector, _forward_model_features or FORWARD_FEATURES)
+    model_features = _forward_model_features or FORWARD_FEATURES
+    X = _select_model_features(vector, model_features)
     prediction = float(model.predict(_encode_vector(X))[0])
+    # the response must list the columns the model was really trained on: since
+    # v2 the Rhine/market drivers are part of the model, so reporting only
+    # FORWARD_FEATURES would hide the driver values behind the prediction.
+    reported = set(model_features)
     result = {
         "date": entry_date.strftime("%Y-%m-%d"),
         "requested_date": entry_date.strftime("%Y-%m-%d"),
@@ -432,7 +437,7 @@ def _predict_forward(entry_date: pd.Timestamp, passed_features: dict):
         "features": {
             k: (float(v) if isinstance(v, (int, float)) else v)
             for k, v in row.items()
-            if k in FORWARD_FEATURES
+            if k in reported
         },
     }
     if passed_features:
