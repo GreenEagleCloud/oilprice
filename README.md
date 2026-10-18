@@ -543,6 +543,13 @@ Dargestellt werden:
   geholt (`{refreshCurve: false}`), und es wird nicht scrolliert
   (`{scroll: true}` nur beim Knopfdruck); die Karte zeigt währenddessen
   `#resultSkeleton`.
+* **Frontend-Server (Gunicorn)** – `--workers 2 --threads 4 --timeout 120`:
+  `/api/forecast` baut die Kurve mit zwölf `/predict`-Anfragen und braucht auf
+  dem Cluster rund 37 s. Mit dem Gunicorn-Standard von 30 s wird der Worker
+  mitten in dieser Serie abgeschossen (`Worker was sent SIGKILL`), und der
+  Browser sieht einen 500 statt einer Prognose – genau das, was die Kurve beim
+  ersten Öffnen braucht. Die Threads halten Geschichte, Pegel und statische
+  Dateien bedienbar, während eine Kurve läuft.
 
 Die Pegel-Logik (Tagesminimum, `min(Basel, Kaub)`, Schwellen) ist in
 `src/frontend/app.py` bewusst dupliziert – das Frontend-Image enthält nur
@@ -587,7 +594,7 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 Aktuelle Images:
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.12
+ghcr.io/greeneaglecloud/oilprice-frontend:1.13
 ghcr.io/greeneaglecloud/oilprice-inference:1.6
 ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
 ```

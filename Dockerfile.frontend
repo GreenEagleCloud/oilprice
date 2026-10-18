@@ -18,4 +18,9 @@ USER appuser
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# /api/forecast builds the whole curve with one /predict request per horizon
+# step - twelve requests through the inference service, 37 s on the live
+# cluster. The gunicorn default of 30 s kills the worker in the middle of that
+# series, and the browser gets a 500 instead of a forecast. Threads keep the
+# other requests (history, pegel, static files) usable while one curve is built.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "120", "app:app"]
