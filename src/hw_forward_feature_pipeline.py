@@ -46,6 +46,7 @@ from hw_config import (
     FORWARD_FEATURE_VIEW_NAME,
     FORWARD_FEATURE_VIEW_VERSION,
     FORWARD_MARKET_FEATURES,
+    FORWARD_ORIGIN_DATE_COLUMN,
     FORWARD_RHEIN_FEATURES,
     FORWARD_SERVING_HORIZONS,
     FORWARD_TRAINING_HORIZONS,
@@ -375,7 +376,16 @@ def create_forward_feature_view(fg: feature_group.FeatureGroup):
     fv = fs.get_or_create_feature_view(
         name=FORWARD_FEATURE_VIEW_NAME,
         version=FORWARD_FEATURE_VIEW_VERSION,
-        query=fg.select(forward_model_features() + [FORWARD_TARGET]),
+        # `origin_date` is a primary key of the forward feature group and the
+        # anchor the forward split is chronological over. Hopsworks leaves primary
+        # keys out of a feature view unless they are selected, so it is selected
+        # here; forward_model_features() still excludes it from the model matrix.
+        # `target_date` stays unselected on purpose - origin_date +
+        # forecast_horizon_days already determine it, so exposing it would only
+        # add a leak surface.
+        query=fg.select(
+            [FORWARD_ORIGIN_DATE_COLUMN] + forward_model_features() + [FORWARD_TARGET]
+        ),
         labels=[FORWARD_TARGET],
         description="Forward oil-price forecast: origin-date features (price/demand + Rhine/market drivers) + forecast_horizon_days -> target week after target_date",
     )

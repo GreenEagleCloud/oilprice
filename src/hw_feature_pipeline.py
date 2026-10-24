@@ -22,6 +22,7 @@ import pandas as pd
 
 from hw_config import (
     DATA_FILE,
+    DATE_COLUMN,
     FEATURES,
     FEATURES_LOCAL_CSV,
     FEATURE_GROUP_NAME,
@@ -253,7 +254,12 @@ def main() -> int:
     model_features = weekly_model_features()
     fv = fs.get_or_create_feature_view(
         name=FEATURE_VIEW_NAME,
-        query=fg.select(model_features + [TARGET]),
+        # `date` is the primary key of the feature group and the anchor of both
+        # the chronological split and the point-in-time seasonal index. Hopsworks
+        # leaves primary keys out of a feature view unless they are selected, so
+        # it is selected here; weekly_model_features() still excludes it from the
+        # model matrix, and hw_app re-selects by the artifact's contract.
+        query=fg.select([DATE_COLUMN] + model_features + [TARGET]),
         version=FEATURE_VIEW_VERSION,
         description=(
             "Weekly oil-price prediction: 12 price/demand features + "

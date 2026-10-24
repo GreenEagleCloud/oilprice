@@ -60,14 +60,28 @@ FEATURE_GROUP_NAME = "heizoel24"
 # only) is kept so the previously served model stays reproducible.
 FEATURE_GROUP_VERSION = 2
 FEATURE_VIEW_NAME = "heizoel24_weekly"
-# v2 = v1 features + the Rhine gauge and oil-market joins (see below). v1 is
-# kept untouched so the model that is currently served stays reproducible.
-FEATURE_VIEW_VERSION = 2
+# v3 = v2 features + the `date` anchor. Hopsworks does not expose a feature
+# group's primary key in a feature view unless it is selected explicitly, and the
+# training pipeline cannot build a chronological split - or keep the seasonal
+# index point-in-time - without it. v1/v2 stay untouched so the models already
+# served from them remain reproducible.
+FEATURE_VIEW_VERSION = 3
 
 FORWARD_FEATURE_GROUP_NAME = "heizoel24_forward"
 FORWARD_FEATURE_GROUP_VERSION = 2
 FORWARD_FEATURE_VIEW_NAME = "heizoel24_forward_forecast"
-FORWARD_FEATURE_VIEW_VERSION = 2
+# v3 = v2 features + the `origin_date` anchor. The forward feature group is keyed
+# by (target_date, origin_date) and the forward split is chronological over
+# origin_date, so the view has to expose it. `target_date` is deliberately NOT
+# selected: origin_date + forecast_horizon_days already determine it, so exposing
+# it would only add a leak risk.
+FORWARD_FEATURE_VIEW_VERSION = 3
+
+# Anchor columns the feature views must expose (see the version notes above).
+# They are primary keys of the feature group and split anchors, never model
+# inputs: weekly_model_features() / forward_model_features() do not list them.
+DATE_COLUMN = "date"
+FORWARD_ORIGIN_DATE_COLUMN = "origin_date"
 
 MODEL_NAME = "oil_price_model"
 MODEL_FILE_NAME = "oil_price_model.pkl"  # joblib file inside the registry model folder
