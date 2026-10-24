@@ -250,3 +250,29 @@ def test_prepare_forward_vector_keeps_strings_for_a_contract_artifact(frame):
 def test_prepare_forward_vector_integer_codes_a_legacy_artifact(frame):
     out = hw_app._prepare_forward_vector(frame[FEATURES].head(3), None)
     assert pd.api.types.is_numeric_dtype(out["target_season"])
+
+
+def test_sidecar_roundtrip_keeps_the_forward_anchor(tmp_path, frame):
+    """A registered forward artifact must come back anchored on `origin_date`.
+
+    The serving app rebuilds the contract from the sidecar and validates the
+    online feature vector against it. A contract that round-trips to the weekly
+    anchor rejects every forward request with "frame is missing 'date'", which is
+    exactly how a correctly trained delta model 500s in production.
+    """
+    from model_artifact import read_model_contract, write_model_features
+
+    contract = forward_contract(FEATURES)
+    model_dir = tmp_path / hw_config.FORWARD_MODEL_NAME
+    model_dir.mkdir()
+    write_model_features(model_dir, hw_config.FORWARD_MODEL_NAME, FEATURES, contract)
+
+    restored = read_model_contract(model_dir)
+    assert restored is not None
+    assert restored.target == FORWARD_DELTA_TARGET
+    assert restored.requires_date is False
+    assert restored.date_column == "origin_date"
+
+    # The check hw_app performs on a live vector has to pass with the restored
+    # contract, not just with the one built in-process.
+    validate_features(frame[FEATURES], restored)

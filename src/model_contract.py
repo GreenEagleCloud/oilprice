@@ -119,6 +119,11 @@ class ModelContract:
             level_target=payload.get("level_target", LEVEL_TARGET),
             horizon_days=int(payload.get("horizon_days", TARGET_HORIZON_DAYS)),
             requires_date=bool(payload.get("requires_date", True)),
+            # `to_dict` writes date_column, so `from_dict` has to read it back:
+            # the forward artifact anchors on `origin_date`, and a contract that
+            # round-trips to "date" makes the serving app reject a perfectly good
+            # feature vector.
+            date_column=str(payload.get("date_column", "date")),
             season_vocabulary=tuple(payload.get("season_vocabulary", SEASON_VOCABULARY)),
             transformer=payload.get("transformer", "unknown"),
             extra=payload.get("extra", {}) or {},
