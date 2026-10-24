@@ -25,7 +25,7 @@ spec:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: training-pipeline
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.0
             imagePullPolicy: Always
             # Exit code 2 means "promotion gate blocked the artifact", which is a
             # policy outcome, not a crash: the forward model must still train and
