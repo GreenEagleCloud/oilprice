@@ -15,7 +15,7 @@ spec:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: feature-pipeline
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.1
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.2
             imagePullPolicy: Always
             # Order matters: the Rhine and market pipelines write the driver
             # feature groups AND their local feature CSVs, and the weekly /
