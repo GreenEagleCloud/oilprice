@@ -16,7 +16,7 @@ spec:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: collect-rhein
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.0
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.1
             imagePullPolicy: Always
             # 1) Basel (data.bs.ch) + Kaub (WSV) gauge series and the realtime
             #    snapshot  2) Port-of-Switzerland monthly cargo bulletins (PDF)

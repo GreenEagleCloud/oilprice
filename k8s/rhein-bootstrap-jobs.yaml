@@ -32,7 +32,7 @@ spec:
       - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
       containers:
       - name: collect-rhein-levels
-        image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.0
+        image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.1
         imagePullPolicy: Always
         command: ["python", "src/collect_rhein_levels.py", "--bootstrap"]
         securityContext:
@@ -87,7 +87,7 @@ spec:
       - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
       containers:
       - name: collect-rhein-cargo
-        image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.0
+        image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.1
         imagePullPolicy: Always
         command: ["python", "src/collect_rhein_cargo.py", "--all"]
         securityContext:
