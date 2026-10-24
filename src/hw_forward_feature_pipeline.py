@@ -366,6 +366,12 @@ def create_forward_feature_view(fg: feature_group.FeatureGroup):
     except Exception:
         pass
 
+    # The view exposes only the level label. The stationary target the model
+    # actually regresses (forward_target_week_change = FORWARD_TARGET -
+    # origin_current_price) is derived in src/hw_forward_training_pipeline.py,
+    # exactly like the weekly pipeline derives target_week_change: a stored delta
+    # column would arrive in the feature view as a feature and could be handed to
+    # the model as if it were an input.
     fv = fs.get_or_create_feature_view(
         name=FORWARD_FEATURE_VIEW_NAME,
         version=FORWARD_FEATURE_VIEW_VERSION,
@@ -373,6 +379,7 @@ def create_forward_feature_view(fg: feature_group.FeatureGroup):
         labels=[FORWARD_TARGET],
         description="Forward oil-price forecast: origin-date features (price/demand + Rhine/market drivers) + forecast_horizon_days -> target week after target_date",
     )
+
     print(
         f"Created feature view '{FORWARD_FEATURE_VIEW_NAME}' "
         f"v{fv.version} with primary keys {FORWARD_PRIMARY_KEYS}"

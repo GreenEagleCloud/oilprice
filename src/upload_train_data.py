@@ -8,8 +8,10 @@ Modes:
     data stays up to date. No daily job is needed - run this manually.
 
 Credentials: s3fs does NOT read FSSPEC_S3_* environment variables; S3FileSystem
-only accepts key/secret/endpoint_url. Therefore the Rook-generated secret is
-read via kubectl and the options are passed explicitly:
+only accepts key/secret/endpoint_url. The credentials are therefore read from the
+environment (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY plus S3_ENDPOINT_URL or
+AWS_ENDPOINT_URL) and passed explicitly - see src/s3_credentials.py. No kubectl
+call, no kubeconfig, no cross-namespace secret read:
 https://s3fs.readthedocs.io/en/latest/index.html#s3-compatible-storage
 
 Usage:
@@ -18,16 +20,14 @@ Usage:
 """
 
 import argparse
-import base64
-import json
-import subprocess
 from pathlib import Path
 
 import pandas as pd
 import requests
 import s3fs
 
-SECRET_NAME = "rook-ceph-object-user-objectstore-objectstore-user"
+from s3_credentials import get_s3_options
+
 BUCKET = "traindata"
 KEY = "train_oilprice_raw.parquet"
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "heizoel24_heizoel_daily_ch_full.csv"
@@ -37,36 +37,6 @@ DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "heizoel24_heizoel
 #   (fetching 3 months makes --append a safe catch-up if it is run late)
 API_URL = "https://www.heizoel24.ch/api/site/1/prices/history"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-
-def get_s3_options():
-    """Read the S3 credentials from the Rook-generated secret in the rook-ceph namespace."""
-    out = subprocess.run(
-        [
-            "kubectl",
-            "-n",
-            "rook-ceph",
-            "get",
-            "secret",
-            SECRET_NAME,
-            "-o",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    secret_data = json.loads(out)["data"]
-
-    # the values in the secret are base64-encoded
-    access_key = base64.b64decode(secret_data["AccessKey"]).decode()
-    secret_key = base64.b64decode(secret_data["SecretKey"]).decode()
-    endpoint = base64.b64decode(secret_data["Endpoint"]).decode()
-    return {
-        "key": access_key,
-        "secret": secret_key,
-        "endpoint_url": endpoint,
-    }
 
 
 def fetch_recent_prices():

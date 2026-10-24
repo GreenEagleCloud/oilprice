@@ -38,6 +38,13 @@ from rhein_config import (
     RHEIN_LEVEL_FEATURE_VIEW_VERSION,
     RHEIN_LEVEL_FEATURES_CSV,
 )
+# Re-exported from src/model_contract.py so the forward target names live in one
+# place: the feature pipelines, the training pipelines and the inference app all
+# read the same constants instead of repeating string literals.
+from model_contract import (  # noqa: F401
+    FORWARD_DELTA_TARGET,
+    FORWARD_ORIGIN_PRICE,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / ".env")
@@ -197,6 +204,12 @@ FORWARD_FEATURES = [
 FORWARD_RHEIN_FEATURES = [f"origin_{name}" for name in RHEIN_MODEL_FEATURES]
 FORWARD_MARKET_FEATURES = [f"origin_{name}" for name in MARKET_MODEL_FEATURES]
 
+# Level label stored in the forward feature group. The forward model does NOT
+# regress it: it regresses FORWARD_DELTA_TARGET = FORWARD_TARGET -
+# origin_current_price, exactly like the weekly model regresses
+# target_week_change instead of target_next_week_price. The delta is derived at
+# training time and is deliberately not a column of the feature view - a stored
+# delta column would be a label-shaped feature the view could hand to the model.
 FORWARD_TARGET = "target_price_week_after_target_date"
 
 # Training horizons used to teach the model how predictions change with the

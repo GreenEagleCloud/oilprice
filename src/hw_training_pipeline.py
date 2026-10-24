@@ -11,13 +11,13 @@ Run:
 """
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
 import joblib
 import mlflow
 import pandas as pd
-from sklearn.metrics import mean_squared_error
 
 from hw_config import (
     FEATURES,
@@ -34,24 +34,35 @@ from hw_config import (
     weekly_model_features,
 )
 from model_artifact import write_model_features
-from training_pipeline import build_model, get_s3_options, save_model_to_s3
+from model_contract import (
+    DELTA_TARGET,
+    LEVEL_TARGET,
+    MAX_SKILL_VS_PERSISTENCE,
+    TARGET_HORIZON_DAYS,
+    ContractError,
+    ModelContract,
+    chronological_split,
+)
+from training_pipeline import build_model, evaluate, get_s3_options, save_model_to_s3
 
 
-def encode_features(X: pd.DataFrame) -> pd.DataFrame:
-    """Non-numeric feature columns -> integer codes.
+def encode_features(X: pd.DataFrame) -> pd.DataFrame:  # pragma: no cover - removed
+    """Deprecated: integer-coding categoricals is no longer part of the contract.
 
-    Same as `prepare_data` in src/training_pipeline.py: RandomForestRegressor
-    (sklearn 1.9.1) has no native categorical support and converts X strictly
-    to float, so string columns (e.g. "season") must be encoded first.
+    The persisted pipeline one-hot encodes `season` from the raw strings, so the
+    vocabulary is keyed by category name. Integer coding here produced a
+    position-keyed model that silently degraded whenever the serving side coded
+    "Frühling" differently. Kept only so stale imports fail loudly at the call
+    site rather than producing a wrong model.
     """
-    X = X.copy()
-    for col in X.columns:
-        if not pd.api.types.is_numeric_dtype(X[col]):
-            X[col] = X[col].astype("category").cat.codes
-    return X
+    raise ContractError(
+        "encode_features() was removed: pass raw category strings to build_model()"
+    )
 
 
-def register_model(project, model, mse: float, features: list | None = None):
+
+def register_model(project, model, mse: float, features: list | None = None,
+                   contract: ModelContract | None = None):
     """Register the model in the Hopsworks Model Registry.
 
     Hopsworks 5.x model registry: `Model.save(model_folder)` uploads a folder
@@ -61,6 +72,8 @@ def register_model(project, model, mse: float, features: list | None = None):
 
     `features` is written as a sidecar file so the inference app knows exactly
     which feature-view columns this model expects (see src/model_artifact.py).
+    The full `contract` (target, horizon, categorical vocabulary) travels next to
+    the pickle so serving can validate a request before calling predict().
     """
     from hsml.model import Model
 
@@ -69,15 +82,15 @@ def register_model(project, model, mse: float, features: list | None = None):
         model_dir.mkdir()
         joblib.dump(model, model_dir / MODEL_FILE_NAME)
         if features:
-            write_model_features(model_dir, MODEL_NAME, features)
+            write_model_features(model_dir, MODEL_NAME, features, contract)
 
         registry = project.get_model_registry()
         reg_model = Model(
             id=None,
             name=MODEL_NAME,
-            description="RandomForest pipeline -> target_next_week_price (heizoel24, weekly)",
+            description="RandomForest pipeline -> target_week_change (heizoel24, weekly)",
             framework="SKLEARN",
-            metrics={"mse": float(mse)},
+            metrics={"level_mse": float(mse)},
             # The default model registry id equals the project id; it must be
             # passed explicitly, otherwise Model.save() builds the REST path
             # with registry id None and the backend returns 404.
@@ -91,7 +104,9 @@ def main() -> int:
     project = login()
     fs = project.get_feature_store()
     fv = fs.get_feature_view(FEATURE_VIEW_NAME, version=FEATURE_VIEW_VERSION)
-    X_train, X_test, y_train, y_test = fv.train_test_split(test_size=TEST_SIZE)
+    X_split_train, X_split_test, y_split_train, y_split_test = fv.train_test_split(
+        test_size=TEST_SIZE
+    )
 
     # The feature group also holds the most recent dates whose 7-day-ahead
     # label is NULL (stored for serving, see hw_feature_pipeline.py); rows
@@ -101,25 +116,49 @@ def main() -> int:
         keep = y.iloc[:, 0].notna().to_numpy()
         return X[keep], y[keep]
 
-    n_total = len(y_train) + len(y_test)
-    X_train, y_train = _drop_unlabeled(X_train, y_train)
-    X_test, y_test = _drop_unlabeled(X_test, y_test)
-    print(f"train_test_split: {n_total} rows, dropped {n_total - len(y_train) - len(y_test)} rows without a label")
+    n_total = len(y_split_train) + len(y_split_test)
+    X_split_train, y_split_train = _drop_unlabeled(X_split_train, y_split_train)
+    X_split_test, y_split_test = _drop_unlabeled(X_split_test, y_split_test)
+    print(f"feature view rows: {n_total}, dropped {n_total - len(y_split_train) - len(y_split_test)} rows without a label")
 
     # 2) Model feature columns: the config says which drivers should be used,
     #    the feature view says what is actually available. Driver columns that
     #    the view does not have (yet) are reported and skipped instead of
     #    failing the training.
     wanted = weekly_model_features()
-    missing = [col for col in wanted if col not in X_train.columns]
+    missing = [col for col in wanted if col not in X_split_train.columns]
     if missing:
         print(f"WARNING: feature view '{FEATURE_VIEW_NAME}' v{FEATURE_VIEW_VERSION} lacks {missing}")
-    model_features = [col for col in wanted if col in X_train.columns]
+    model_features = [col for col in wanted if col in X_split_train.columns]
     driver_features = [col for col in model_features if col not in FEATURES]
-    X_train, X_test = X_train[model_features], X_test[model_features]
+    if "date" not in X_split_train.columns:
+        raise ContractError(
+            f"feature view '{FEATURE_VIEW_NAME}' does not expose 'date'; the split "
+            f"and the point-in-time seasonal index both require it"
+        )
+    model_inputs = model_features + (["date"] if "date" not in model_features else [])
 
-    X_train, X_test = encode_features(X_train), encode_features(X_test)
-    print(f"X_train: {X_train.shape} | X_test: {X_test.shape}")
+    # 3) Chronological split with embargo. fv.train_test_split() shuffles, which
+    #    leaks the future into training; the frames are recombined and re-split by
+    #    date so the embargo is applied to post-dropna positions.
+    frame = pd.concat([X_split_train, X_split_test], ignore_index=True)
+    frame[LEVEL_TARGET] = pd.concat(
+        [pd.DataFrame(y_split_train), pd.DataFrame(y_split_test)], ignore_index=True
+    ).iloc[:, 0].to_numpy()
+    frame = frame.dropna(subset=model_inputs + [LEVEL_TARGET]).reset_index(drop=True)
+    frame[DELTA_TARGET] = frame[LEVEL_TARGET] - frame["current_price"]
+
+    train, test, audit = chronological_split(
+        frame, test_size=TEST_SIZE, horizon_days=TARGET_HORIZON_DAYS
+    )
+    X_train, y_train = train[model_inputs], train[DELTA_TARGET]
+    print(f"X_train: {X_train.shape} | y_train (delta): {y_train.shape}")
+    print(
+        f"train {audit['train_start_date']} .. {audit['train_end_date']} "
+        f"(labels reach {audit['train_label_end_date']}) | "
+        f"test {audit['test_start_date']} .. {audit['test_end_date']} | "
+        f"embargo {audit['embargo_days']}d, {audit['dropped_by_embargo']} rows dropped"
+    )
     print(f"driver features used: {len(driver_features)} ({', '.join(driver_features)})")
 
     # 2) Train + MLflow (same run setup as src/training_pipeline.py)
@@ -133,21 +172,51 @@ def main() -> int:
     model = build_model(X_train)
     with mlflow.start_run():
         model.fit(X_train, y_train)
-        predictions = model.predict(X_test)
-        mse = mean_squared_error(y_test, predictions)
+        metrics = evaluate(model, train, test, input_columns=model_inputs)
 
-        mlflow.log_param("model_type", "Pipeline(ColumnTransformer + RandomForestRegressor)")
+        for key, value in audit.items():
+            mlflow.log_param(key, value)
+        mlflow.log_param("model_type", "Pipeline(ExpandingSeasonalIndex + ColumnTransformer + RandomForestRegressor)")
+        mlflow.log_param("target", DELTA_TARGET)
         mlflow.log_param("n_estimators", N_ESTIMATORS)
         mlflow.log_param("test_size", TEST_SIZE)
         mlflow.log_param("random_state", RANDOM_STATE)
         mlflow.log_param("data_source", f"hopsworks feature view {FEATURE_VIEW_NAME} v{FEATURE_VIEW_VERSION}")
         mlflow.log_param("n_features", len(model_features))
         mlflow.log_param("driver_features", ",".join(driver_features) or "none")
-        mlflow.log_metric("mse", mse)
-    print(f"MSE: {mse}")
+        mlflow.log_metric("level_mse", metrics["level_mse"])
+        mlflow.log_metric("level_r2", metrics["level_r2"])
+        mlflow.log_metric("delta_mse", metrics["delta_mse"])
+        mlflow.log_metric("delta_r2", metrics["delta_r2"])
+        for name, value in metrics["baselines"].items():
+            mlflow.log_metric(f"baseline_level_mse_{name}", value)
+        mlflow.log_metric("skill_vs_persistence", metrics["skill_vs_persistence"])
+        gate_ok = metrics["skill_vs_persistence"] < MAX_SKILL_VS_PERSISTENCE
+        mlflow.log_metric("promotion_gate", 1 if gate_ok else 0)
 
-    # 3) Register in the Hopsworks Model Registry (auto versioning)
-    registered = register_model(project, model, mse, model_features)
+    mse = metrics["level_mse"]
+    print(f"Level MSE: {mse:.2f} (R2 {metrics['level_r2']:.3f}) | "
+          f"skill vs persistence {metrics['skill_vs_persistence']:.3f}")
+
+    # 5) Promotion gate: never register or export a model that is not better than
+    #    'next week's price is today's price'.
+    if not gate_ok:
+        print(
+            "PROMOTION BLOCKED: model is not better than persistence on the "
+            "chronological hold-out; registry and S3 export skipped.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # 6) Register in the Hopsworks Model Registry (auto versioning)
+    contract = ModelContract(
+        features=model_inputs,
+        target=DELTA_TARGET,
+        level_target=LEVEL_TARGET,
+        horizon_days=TARGET_HORIZON_DAYS,
+        extra={"driver_features": driver_features, "n_estimators": N_ESTIMATORS},
+    )
+    registered = register_model(project, model, mse, model_inputs, contract)
     print(f"Registered '{MODEL_NAME}' (version {registered.version}) in the Hopsworks Model Registry")
 
     # 4) Optional: export to S3 for the legacy inference app

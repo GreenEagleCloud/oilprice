@@ -55,7 +55,13 @@ from hw_config import (  # noqa: E402
     RT_FEATURES,
     login,
 )
-from model_artifact import read_model_features  # noqa: E402
+from model_artifact import read_model_contract, read_model_features  # noqa: E402
+from model_contract import (  # noqa: E402
+    DELTA_TARGET,
+    FORWARD_DELTA_TARGET,
+    FORWARD_ORIGIN_PRICE,
+    validate_features,
+)
 
 app = Flask(__name__)
 
@@ -65,17 +71,23 @@ _codes = None
 _forward_model = None
 _forward_fv = None
 _model_features = None
+_model_contract = None
 _forward_model_features = None
+_forward_model_contract = None
 
 
 def _category_codes() -> dict:
     """Map non-numeric feature values to their training-time category codes.
 
-    The training pipeline encodes non-numeric columns via
-    .astype("category").cat.codes on the FULL dataset, so the codes follow
-    the sorted unique values. Encoding a single-row vector would produce
-    different codes (e.g. "Herbst" -> 0 instead of 1), so the mapping is
-    computed from the exact dataset used for training (FEATURES_LOCAL_CSV).
+    LEGACY path, only for a forward artifact that was trained before the model
+    contract existed (see `_prepare_forward_vector`). The current pipelines one-hot
+    encode the raw category strings inside the persisted Pipeline, so integer
+    coding a contract-aware artifact would map every category onto the wrong block.
+
+    The codes follow the sorted unique values of the FULL training dataset, so the
+    mapping is computed from that dataset (FEATURES_LOCAL_CSV) rather than from a
+    single-row vector, which would produce different codes (e.g. "Herbst" -> 0
+    instead of 1).
     """
     global _codes
     if _codes is None:
@@ -105,11 +117,12 @@ def _category_codes() -> dict:
 
 
 def _encode_vector(vector: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy of `vector` with non-numeric columns integer-coded.
+    """Integer-code non-numeric columns (forward model only).
 
-    Must mirror `encode_features` in src/hw_training_pipeline.py so the model
-    receives the same representation it was trained on. The original (string)
-    values are kept separately for the response.
+    The weekly model no longer goes through here: its pipeline one-hot encodes
+    `season` from the raw strings, so integer-coding it here would silently map
+    every category onto the wrong one-hot block. Only the forward model, which is
+    still trained with integer codes, uses this helper.
     """
     X = vector.copy()
     for col, mapping in _category_codes().items():
@@ -160,7 +173,7 @@ def _default_date() -> str:
 
 def _load_model():
     """Model from the Hopsworks Model Registry (latest version), S3 fallback."""
-    global _model, _model_features
+    global _model, _model_features, _model_contract
     if _model is not None:
         return _model
 
@@ -174,9 +187,11 @@ def _load_model():
             folder = latest.download()
             _model = joblib.load(os.path.join(folder, MODEL_FILE_NAME))
             _model_features = read_model_features(folder)
+            _model_contract = read_model_contract(folder)
             print(
                 f"Model '{MODEL_NAME}' v{latest.version} loaded from the Hopsworks Model Registry"
                 + (f" ({len(_model_features)} features)" if _model_features else "")
+                + (f", target={_model_contract.target}" if _model_contract else "")
             )
             return _model
         print(f"No model '{MODEL_NAME}' in the Model Registry, falling back to S3")
@@ -262,8 +277,13 @@ def _get_forward_fv():
 
 
 def _load_forward_model():
-    """Forward model from the Hopsworks Model Registry, S3 fallback."""
-    global _forward_model, _forward_model_features
+    """Forward model from the Hopsworks Model Registry, S3 fallback.
+
+    The contract sidecar (src/model_artifact.py) decides what the artifact's
+    number means: `forward_target_week_change` (a delta that has to be added to
+    the origin price) or the price level itself (pre-contract artifacts).
+    """
+    global _forward_model, _forward_model_features, _forward_model_contract
     if _forward_model is not None:
         return _forward_model
 
@@ -276,10 +296,17 @@ def _load_forward_model():
             folder = latest.download()
             _forward_model = joblib.load(os.path.join(folder, FORWARD_MODEL_FILE_NAME))
             _forward_model_features = read_model_features(folder)
+            _forward_model_contract = read_model_contract(folder)
+            target = (
+                _forward_model_contract.target
+                if _forward_model_contract is not None
+                else "unknown (artifact without contract sidecar)"
+            )
             print(
                 f"Model '{FORWARD_MODEL_NAME}' v{latest.version} loaded "
                 "from the Hopsworks Model Registry"
                 + (f" ({len(_forward_model_features)} features)" if _forward_model_features else "")
+                + f", target {target}"
             )
             return _forward_model
         print(f"No model '{FORWARD_MODEL_NAME}' in the Model Registry, falling back to S3")
@@ -293,11 +320,29 @@ def _load_forward_model():
     try:
         response = s3.get_object(Bucket=MODEL_BUCKET, Key=FORWARD_MODEL_FILE_NAME)
         _forward_model = joblib.load(BytesIO(response["Body"].read()))
+        # An S3 artifact carries no contract sidecar, so it is served with the
+        # legacy semantics: the pickle predicts the price level directly.
+        _forward_model_contract = None
         print(f"Forward model loaded from s3://{MODEL_BUCKET}/{FORWARD_MODEL_FILE_NAME}")
         return _forward_model
     except Exception as e:
         print(f"s3://{MODEL_BUCKET}/{FORWARD_MODEL_FILE_NAME} not available: {e}")
     raise RuntimeError("No forward model found in the Hopsworks Model Registry or on S3")
+
+
+def _prepare_forward_vector(vector: pd.DataFrame, contract):
+    """Encode the forward feature vector the way this artifact was trained.
+
+    A contract-aware forward artifact one-hot encodes `target_season` from the raw
+    strings inside its persisted Pipeline, so the vector is validated against the
+    contract and passed through unchanged. Only an artifact that predates the
+    contract was trained on integer category codes; that path is kept so the model
+    currently in the registry keeps serving until it is retrained.
+    """
+    if contract is None:
+        return _encode_vector(vector)
+    validate_features(vector, contract)
+    return vector
 
 
 def _forward_passed_features(passed_features: dict) -> dict:
@@ -421,8 +466,29 @@ def _predict_forward(entry_date: pd.Timestamp, passed_features: dict):
 
     model = _load_forward_model()
     model_features = _forward_model_features or FORWARD_FEATURES
+    contract = _forward_model_contract
     X = _select_model_features(vector, model_features)
-    prediction = float(model.predict(_encode_vector(X))[0])
+    raw = float(model.predict(_prepare_forward_vector(X, contract))[0])
+
+    # What the raw number means is decided by the artifact, not by the app:
+    # the current forward model predicts `forward_target_week_change`, the change
+    # from the price known at origin_date, so the served price is reconstructed as
+    # origin_current_price + delta. An artifact that predates the contract predicted
+    # the level directly and is served unchanged.
+    origin_price = float(row[FORWARD_ORIGIN_PRICE])
+    if contract is not None and contract.target == FORWARD_DELTA_TARGET:
+        prediction = origin_price + raw
+        predicted_change = raw
+        target_semantics = FORWARD_DELTA_TARGET
+    else:
+        prediction = raw
+        predicted_change = prediction - origin_price
+        target_semantics = (
+            contract.target
+            if contract is not None
+            else "level (pre-contract artifact)"
+        )
+
     # the response must list the columns the model was really trained on: since
     # v2 the Rhine/market drivers are part of the model, so reporting only
     # FORWARD_FEATURES would hide the driver values behind the prediction.
@@ -433,6 +499,8 @@ def _predict_forward(entry_date: pd.Timestamp, passed_features: dict):
         "origin_date": origin_date.strftime("%Y-%m-%d"),
         "forecast_horizon_days": horizon,
         "prediction_next_week_price": prediction,
+        "predicted_week_change": predicted_change,
+        "target": target_semantics,
         "model": "forward_forecast",
         "features": {
             k: (float(v) if isinstance(v, (int, float)) else v)
@@ -504,11 +572,27 @@ def predict():
                 ),
                 404,
             )
-        # 3) prediction with the model from the Model Registry (or S3 fallback)
-        #    (non-numeric features are integer-coded exactly as in training)
+        # 3) prediction with the model from the Model Registry (or S3 fallback).
+        #    The weekly pipeline carries its own encoders: `season` stays a raw
+        #    string and the point-in-time seasonal index is recomputed inside the
+        #    model, so the vector is passed through unmodified - integer-coding it
+        #    here would silently land every category on the wrong one-hot block.
         model = _load_model()
-        X = _select_model_features(vector, _model_features)
-        prediction = float(model.predict(_encode_vector(X))[0])
+        contract = _model_contract
+        features = _model_features or (contract.features if contract else None)
+        X = _select_model_features(vector, features)
+        if "date" not in X.columns:
+            X = X.assign(date=entry_date)
+        if contract is not None:
+            validate_features(X, contract)
+
+        raw = float(model.predict(X)[0])
+        if contract is not None and contract.target == DELTA_TARGET:
+            predicted_delta = raw
+            prediction = float(row["current_price"]) + predicted_delta
+        else:
+            predicted_delta = None
+            prediction = raw
     except Exception as e:
         forward_result, forward_error = _predict_forward(entry_date, passed_features)
         if forward_result is not None:
@@ -525,6 +609,9 @@ def predict():
             k: (float(v) if isinstance(v, (int, float)) else v) for k, v in row.items()
         },
     }
+    if predicted_delta is not None:
+        result["predicted_week_change"] = predicted_delta
+        result["prediction_rule"] = "current_price + predicted target_week_change"
     if passed_features:
         result["passed_features"] = passed_features
     return jsonify(result)

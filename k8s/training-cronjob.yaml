@@ -5,10 +5,20 @@ metadata:
   namespace: oilprice
 spec:
   schedule: "0 1 * * *"
+  # A retrain must never overlap the previous one: two concurrent jobs would both
+  # try to register a model version and both write s3://oilprice-models/.
+  concurrencyPolicy: Forbid
+  # Alert if the job cannot start within 30 min of its scheduled time (image pull
+  # problems, node pressure) instead of silently skipping the run.
+  startingDeadlineSeconds: 1800
+  # Keep the failed runs: a blocked promotion gate is a signal, not noise.
+  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 3
   jobTemplate:
     spec:
       # hard bound: a stuck Hopsworks login/upsert must not run into the next cron
       activeDeadlineSeconds: 1800
+      backoffLimit: 0
       template:
         spec:
           imagePullSecrets:
@@ -17,7 +27,18 @@ spec:
           - name: training-pipeline
             image: ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
             imagePullPolicy: Always
-            command: ["sh", "-c", "python src/hw_training_pipeline.py && python src/hw_forward_training_pipeline.py"]
+            # Exit code 2 means "promotion gate blocked the artifact", which is a
+            # policy outcome, not a crash: the forward model must still train and
+            # the CronJob must not report a failure. Any other non-zero code is a
+            # real error and must surface as a failed Job.
+            command: ["sh", "-c", "python src/hw_training_pipeline.py; weekly=$?; python src/hw_forward_training_pipeline.py; forward=$?; echo \"weekly_exit=$weekly forward_exit=$forward\"; if [ $weekly -ne 0 ] && [ $weekly -ne 2 ]; then exit 1; fi; if [ $forward -ne 0 ] && [ $forward -ne 2 ]; then exit 1; fi; exit 0"]
+            resources:
+              requests:
+                cpu: "500m"
+                memory: "1Gi"
+              limits:
+                cpu: "2"
+                memory: "3Gi"
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
@@ -60,7 +81,10 @@ spec:
                 secretKeyRef:
                   name: mlflow-credentials
                   key: tracking_uri
-            # S3 export of the model (rook-ceph object storage)
+            # S3 export of the model (rook-ceph object storage). src/s3_credentials.py
+            # reads exactly these three variables - the pipeline never calls kubectl,
+            # so the Job pod needs no kubeconfig and no RBAC on rook-ceph Secrets.
+            # (S3_ENDPOINT_URL is accepted as an alias of AWS_ENDPOINT_URL.)
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

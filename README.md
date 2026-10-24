@@ -36,14 +36,27 @@ nächsten 7 Tage (`target_next_week_price`) voraus.
 * `feature_pipeline.py` / `upload_train_data.py` – Features → S3 (`s3://oilprice-features/`)
 * `training_pipeline.py` – Training → MLflow, Modell → S3 (`s3://oilprice-models/oil_price_model.pkl`)
 * `inference/app.py` – Flask-App (Modell aus S3)
+* `s3_credentials.py` – S3-Optionen (`key`/`secret`/`endpoint_url`) ausschliesslich aus
+  Umgebungsvariablen: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` und
+  `AWS_ENDPOINT_URL` (Alias `S3_ENDPOINT_URL`). Im Cluster kommen sie aus
+  `secretKeyRef: s3-credentials`; die Pipelines rufen nie `kubectl` auf und brauchen
+  weder kubeconfig noch RBAC auf die Secrets im `rook-ceph`-Namespace
 
 ### Hopsworks-Flow (TODO Punkte 6–8)
 * `hw_config.py` – gemeinsame Konfiguration (Names, Features, `.env`) + `login()`
 * `hw_feature_pipeline.py` – Feature Group `heizoel24` (online-enabled) + Feature View `heizoel24_weekly`; joined zusätzlich die Rhein- und Markt-Treiber (v2)
 * `hw_forward_feature_pipeline.py` – Feature Group `heizoel24_forward` + Feature View `heizoel24_forward_forecast` für zukünftige Zieltermine; Primary Keys sind `target_date` + `origin_date`, `forecast_horizon_days` ist ein Modell-Feature; Treiber werden als `origin_*`-Spalten geführt
 * `hw_training_pipeline.py` – Training aus der wöchentlichen Feature View → MLflow + Hopsworks Model Registry (+ S3-Export)
-* `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View → MLflow + Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export)
+* `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View auf
+  `forward_target_week_change` (Delta gegenüber `origin_current_price`) → MLflow +
+  Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export); registriert nur,
+  wenn das Persistence-Gate erfüllt ist
 * `model_artifact.py` – schreibt `model_features.json` ins Modell-Artefact, damit die Inferenz exakt die trainierten Spalten verwendet
+* `model_contract.py` – eine Quelle für den Ein-/Ausgabevertrag beider Modelle:
+  Feature-Listen, kategoriale Spalten, Level- vs. Delta-Target, chronologischer Split
+  mit Embargo (`chronological_split`, `forward_chronological_split`),
+  Persistence-Baselines und das Promotion-Gate. Der Vertrag liegt als JSON im
+  Modell-Artefact und wird beim Servieren gegen den Feature-Vektor geprüft
 * `inference/hw_app.py` – Flask-App: zuerst wöchentlicher Feature Vector; bei fehlendem/futurischem Datum Fallback auf Forward-Feature-View und `oil_price_forward_model`
 * `rhein_config.py` – Stationen, Quellen, Schwellen und Feature-Listen für die Rhein-Daten
 * `collect_rhein_levels.py` – Pegel Basel + Kaub (data.bs.ch, WSV, BAFU/LINDAS) → `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`
@@ -586,6 +599,29 @@ dient nur für lokale Tests und für den Fall, dass S3 nicht erreichbar ist.
   Zeilen als die Wochen-Feature Group. Deshalb verwendet
   `hw_forward_training_pipeline.py` einen kleineren RandomForest
   (`max_depth`, `min_samples_leaf`, `max_features`), damit das registrierte
+  Artefact für die Online-Inferenz klein bleibt.
+* **Stationäre Targets (beide Modelle)**: trainiert wird nicht der Preislevel,
+  sondern die Änderung – wöchentlich `target_week_change = target_next_week_price
+  - current_price`, forward `forward_target_week_change =
+  target_price_week_after_target_date - origin_current_price`. Ein RandomForest
+  kann keinen Level extrapolieren: auf dem Level trainiert degeneriert eine
+  90-Tage-Prognose zum Durchschnitt historischer Level und verliert gegen "der
+  Preis bleibt, wo er ist". Beide Feature Views speichern weiterhin nur den
+  Level-Label; die Delta-Spalte wird im Training berechnet und ist bewusst kein
+  Feature-View-Column – sonst wäre sie ein Label in Feature-Verkleidung.
+  Ausgeliefert wird der Level wieder als `current_price` bzw.
+  `origin_current_price` plus die vorhergesagte Delta.
+* **Chronologischer Split mit Embargo**: `fv.train_test_split()` mischt und ist
+  deshalb nur die Datenabholung. Aufgeteilt wird über
+  `chronological_split` (weekly, nach `date`) und `forward_chronological_split`
+  (forward, nach `origin_date`): kein Trainingslabel darf in den Testzeitraum
+  ragen, bei Forward-Zeilen mit 90 Tagen Horizont entsprechend weit.
+* **Promotion-Gate**: beide Pipelines bewerten die Level-MSE gegen die
+  Persistence-Baseline und registrieren/exportieren nur bei
+  `skill_vs_persistence < 1.0`. Exit-Code 2 heisst "blockiert, kein Fehler";
+  `k8s/training-cronjob.yaml` behandelt 2 bewusst als Policy-Ergebnis, damit ein
+  schwaches Modell nicht ins Registry rutscht und die vorherige Version stehen
+  bleibt.
 
 ## Kubernetes Deployment
 
