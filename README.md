@@ -852,11 +852,13 @@ oil_market: 7160 rows 1998-12-23 .. 2026-10-23, sources gasoil=brent_proxy:fred:
 Feature group 'oil_market' v1: 7160 rows upserted
 driver features joined: 11 columns + 2 derived (carry <= 3d) | coverage: basel_level_cm=2316, ... market_price_chf_100l=6109
 Feature group 'heizoel24' v3: 8666 rows upserted
-Feature view 'heizoel24_weekly' v4 ready (26 features)
+Feature view 'heizoel24_weekly' v4 ready (25 features)
 Feature group 'heizoel24_forward' v2: 371179 rows upserted
 ```
 
-`26 features` sind die 25 Modell-Features plus `date` (Primärkey/Event Time).
+`25 features` sind die Modell-Spalten; in der View sitzen zusätzlich `date`
+(Primärkey/Event Time, vom Feature-Engineering verbraucht) und
+`target_next_week_price` (Label) – beides geht nicht ins Modell.
 `rhein_cargo` meldet Kalendermonate ohne publiziertes Bulletin als
 `skipped N rows without an event time` und überspringt sie – hsfs braucht pro
 Primärkey genau eine Zeile mit Event Time.
@@ -1012,7 +1014,7 @@ kubectl -n oilprice logs job/feature-pipeline-<SUFFIX> 2>&1 | tr '\r' '\n' \
 # Feature group 'rhein_cargo' v1: 144 rows upserted
 # Feature group 'oil_market' v1: 7160 rows upserted
 # Feature group 'heizoel24' v3: 8666 rows upserted
-# Feature view 'heizoel24_weekly' v4 ready (26 features)
+# Feature view 'heizoel24_weekly' v4 ready (25 features)
 
 kubectl -n oilprice logs job/training-pipeline-<SUFFIX> 2>&1 | tr '\r' '\n' \
   | grep -E 'Level MSE|skill|PROMOTION|Registered|weekly_exit'
