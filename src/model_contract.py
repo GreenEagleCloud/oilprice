@@ -45,9 +45,11 @@ MIN_TRAIN_ROWS = 1000
 MIN_TEST_ROWS = 100
 MAX_SKILL_VS_PERSISTENCE = 1.0   # model MSE must be strictly better than persistence
 # A driver column may be NULL where its source did not publish, but a driver that
-# is present on less than this share of the training rows is not a driver - it is
-# a mostly-empty column the forest will still split on. Kaub (WSV publishes ~30
-# days) is the case this keeps out until the archive actually covers history.
+# is missing from the hold-out is not a driver - it is a mostly-empty column the
+# forest will split on and that the served model can never use. Coverage is
+# therefore measured on the hold-out, not over the whole history: the Rhine series
+# starts 2020-06 while the price history starts 2003, and Kaub (WSV publishes
+# ~30 days) is the case this keeps out.
 MIN_DRIVER_COVERAGE = 0.5
 
 SEASON_VOCABULARY = ("Winter", "Frühling", "Sommer", "Herbst")

@@ -163,24 +163,33 @@ def main() -> int:
     # rows and was the main reason the weekly model lost to persistence. The
     # forward pipeline has treated drivers as optional all along.
     core_features = [col for col in model_features if col not in driver_features]
-    frame = frame.dropna(subset=core_features + [LEVEL_TARGET]).reset_index(drop=True)
+    frame = frame.dropna(subset=core_features + [LEVEL_TARGET]).sort_values("date").reset_index(
+        drop=True
+    )
 
     # A driver present on only a sliver of the history is not a driver, it is a
-    # column of mostly-NULL values the forest will split on. Kaub is the case
-    # this guards: WSV publishes it for ~30 days, so it must not enter the model
-    # until the accumulated archive actually covers the training window.
+    # column of mostly-NULL values the forest will split on. What decides that is
+    # coverage WHERE THE MODEL IS JUDGED, not over the whole history: the Rhine
+    # series starts 2020-06 while the price history starts 2003, so a driver can
+    # be NULL on 73 % of all rows and still be present on every hold-out day.
+    # Dropping it for that would throw away the only physical signal the model
+    # has; keeping a driver that is absent in the hold-out is the mistake this
+    # guard exists for (Kaub: WSV publishes ~30 days).
     unusable = []
+    holdout = frame.tail(max(1, int(len(frame) * TEST_SIZE)))
     for col in driver_features:
-        share = float(frame[col].notna().mean()) if len(frame) else 0.0
-        if share < MIN_DRIVER_COVERAGE:
-            unusable.append((col, share))
+        overall = float(frame[col].notna().mean()) if len(frame) else 0.0
+        in_holdout = float(holdout[col].notna().mean()) if len(holdout) else 0.0
+        if in_holdout < MIN_DRIVER_COVERAGE:
+            unusable.append((col, overall, in_holdout))
     if unusable:
         print(
-            "driver features dropped for missing coverage "
-            f"(< {MIN_DRIVER_COVERAGE:.0%} of rows): "
-            + ", ".join(f"{col}={share:.1%}" for col, share in unusable)
+            "driver features dropped for missing coverage in the hold-out "
+            f"(< {MIN_DRIVER_COVERAGE:.0%}): "
+            + ", ".join(f"{col}=all {all_share:.1%}/hold-out {hold_share:.1%}"
+                        for col, all_share, hold_share in unusable)
         )
-        model_features = [col for col in model_features if col not in {c for c, _ in unusable}]
+        model_features = [col for col in model_features if col not in {c for c, _, _ in unusable}]
         driver_features = [col for col in model_features if col not in core_features]
     model_inputs = model_features + (["date"] if "date" not in model_features else [])
 
