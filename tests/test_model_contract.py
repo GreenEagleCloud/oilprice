@@ -98,6 +98,29 @@ def test_contract_sidecar_is_marked_as_such(tmp_path, trained):
     assert read_model_contract(tmp_path) is not None
 
 
+def test_pre_marker_contract_sidecar_is_still_a_contract(tmp_path, trained):
+    """The forward artifact in the registry predates the `contract_version` marker.
+
+    The writer that produced it emitted the whole contract dict - target,
+    categorical_features, season_vocabulary - whenever the pipeline supplied a
+    contract. Refusing such a sidecar would integer-code `target_season` and hand
+    integers to a vocabulary-keyed OneHotEncoder, so the declared target is what
+    separates it from a features-only legacy sidecar.
+    """
+    _, _, contract = trained
+    write_model_features(tmp_path, "oil_price_forward_model", contract.features, contract)
+    path = tmp_path / "model_features.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored.pop("contract_version")
+    path.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+    restored = read_model_contract(tmp_path)
+    assert restored is not None
+    assert restored.target == contract.target
+    assert restored.features == contract.features
+    assert "Frühling" in restored.season_vocabulary
+
+
 def test_missing_sidecar_returns_none(tmp_path):
     assert read_model_features(tmp_path) is None
     assert read_model_contract(tmp_path) is None
