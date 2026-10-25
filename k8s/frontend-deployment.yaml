@@ -17,7 +17,7 @@ spec:
       - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
       containers:
       - name: frontend
-        image: ghcr.io/greeneaglecloud/oilprice-frontend:1.15
+        image: ghcr.io/greeneaglecloud/oilprice-frontend:1.16
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
