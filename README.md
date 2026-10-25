@@ -1,52 +1,128 @@
 # oilprice
 
-CAS MLOPS – Vorhersage des Heizölpreises (heizoel24, Schweiz) für die nächste Woche.
+CAS MLOPS – Vorhersage des Heizölpreises (heizoel24, Schweiz): der Ø-Preis der
+Woche nach einem Zieltermin, für heute und bis 90 Tage voraus.
 
-Aus den täglichen Heizölpreisen (CHF/100l) und der Nachfrage (2003–2026) werden
-12 Features berechnet; ein RandomForest (sklearn `Pipeline`) sagt den Ø-Preis der
-nächsten 7 Tage (`target_next_week_price`) voraus.
+Aus den täglichen Heizölpreisen (CHF/100l) und der Nachfrage (2003–2026) sowie den
+externen Treibern Rheinpegel und Ölmarkt (Gasoil-Proxy + USD/CHF) werden 25
+Modell-Features gebildet. Zwei RandomForest-Modelle (sklearn `Pipeline`) sagen den
+Ø-Preis der Woche nach dem Zieltermin voraus: `oil_price_model` über die
+Wochen-Feature-View, `oil_price_forward_model` über die Forward-Feature-View für
+Zieltermine, die noch keinen Wochen-Feature-Row haben.
+
+## Stand (2026-10-25)
+
+| Bereich | Zustand |
+| --- | --- |
+| Live | `https://oilprice.greeneagle.ai/` (Frontend → `inference-service`) |
+| Images | `oilprice-frontend:1.16`, `oilprice-inference:1.12`, `oilprice-pipelines:2.6` |
+| Feature Groups | `heizoel24` v3, `heizoel24_forward` v2, `rhein_level` v1, `rhein_cargo` v1, `oil_market` v1 – alle online-enabled |
+| Feature Views | `heizoel24_weekly` v4 (25 Modell-Features + Label), `heizoel24_forward_forecast` v3 (24 Features + `origin_date`-Anker), `rhein_level_daily` v1, `rhein_cargo_monthly` v1, `oil_market_daily` v1 |
+| Model Registry | `oil_price_model` v23 (Level-MSE 1.52, 23 Features, Legacy-Sidecar), `oil_price_forward_model` v23 (24 Features, skill_vs_persistence 0.964) |
+| Wochen-Gate | letzter Lauf blockiert: overall 1.058, volatile Wochen 1.032 (gefordert < 1.0) → v23 bleibt im Serving stehen |
+| Forward-Gate | bestanden: 0.964; nach Horizont 1–7d 1.007, 8–30d 0.989, 31–60d 0.954, 61–90d 0.922 |
+| CronJobs (UTC) | `collect-daily-prices` 23:30, `collect-rhein` 23:35, `feature-pipeline` 00:00, `training-pipeline` 01:00 |
+| Tests | `181 passed` (`python -m pytest tests -q`) |
+
+Der Wochenlauf ist gegen die Persistence-Baseline **nicht** promotionswürdig, solange
+er in den Wochen, in denen sich der Preis wirklich bewegt, nicht unter 1.0 kommt;
+das Registry behält deshalb die letzte zugelassene Version. Der Forward-Pfad ist
+promotionswürdig und trägt die Prognosekurve im Frontend.
+
+## MVP
+
+Der MVP ist die Kette Sammler → Feature Store → Training mit Promotion-Gate →
+Serving → Frontend, die täglich läuft und über `https://oilprice.greeneagle.ai/`
+bedienbar ist:
+
+* **drin**: tägliche Preis-/Nachfrage-Sammlung, Rhein- und Markt-Treiber, Wochen-
+  und Forward-Modell mit Delta-Ziel und chronologischem Split mit Embargo,
+  Promotion-Gate gegen Persistence, Modell-Vertrag im Artefact, Online-Serving über
+  den Hopsworks Feature Store, Prognosekurve bis 90 Tage im Frontend.
+* **draussen**: Fracht-Features (`rhein_cargo`) sind im Feature Store, aber kein
+  Modell-Feature; Kaub ist als Pegel im Dashboard, aber (noch) kein Modell-Feature –
+  die Historie wächst täglich in `raw/rhein_kaub_raw.csv`; Unsicherheit wird im
+  Frontend als benanntes Schwankungsband gezeigt, nicht als Modell-Konfidenz.
+
+Ein MVP-Lauf von einem sauberen Checkout dauert vier Schritte (`.env` aus
+`.env.example`, `uv venv && uv pip install -e .`, Feature-Pipeline, Trainings-
+Pipeline, `src/inference/hw_app.py`) – Details in der Dokumentation neben diesem
+Repo (`../implementation_plan/08_documentation.md`).
 
 ## Daten
 
 | Datei | Beschreibung |
 | --- | --- |
-| `data/heizoel24_heizoel_daily_ch_full.csv` | Rohdaten: `date`, `price`, `demand` (2003–2026) |
+| `data/heizoel24_heizoel_daily_ch_full.csv` | Rohdaten: `date`, `price`, `demand` (2003–2026); Spiegel von `s3://oilprice-features/raw/oil_data.csv` |
 | `data/heizoel24_heizoel_daily_ch_5y.csv` | gleicher Datensatz, letzte 5 Jahre |
 | `data/features/heizoel24_features.csv` | Features + Labels (generiert von Notebook 04 / `src/hw_feature_pipeline.py`) |
 | `data/rhein/rhein_levels.csv` | Rhein-Pegel täglich (Basel-Rheinhalle + Kaub), Quelle: `s3://oilprice-features/raw/rhein_levels.csv` |
 | `data/rhein/rhein_snapshot.json` | aktueller Pegel + Engstellen-Berechnung (Inferenz-Eingang) |
+| `data/rhein/rhein_kaub_raw.csv` | append-only Archiv der Kaub-Rohmesswerte (`src/collect_rhein_kaub_history.py`), weil WSV nur ~30 Tage liefert |
 | `data/rhein/rhein_cargo.csv` | Monats-Fracht der Schweizer Rheinhäfen nach Warengattung (PDF-Bulletins) |
+| `data/rhein/rhein_bulletins_parsed.json` | bereits abgerufene Bulletins (Punkt-in-Time-Gedächtnis, `--all` baut den Bestand neu auf) |
 | `data/features/rhein_level_features.csv` | tägliche Pegel-Features (`src/hw_rhein_feature_pipeline.py`) |
 | `data/features/rhein_cargo_features.csv` | monatliche Fracht-Features (MoM/YoY) |
+| `data/oil/oil_market_prices.csv` | Markt-Rohdaten Gasoil/Brent-Proxy + USD/CHF (`src/collect_oil_market_prices.py`) |
+| `data/features/oil_market_features.csv` | Markt-Features in CHF/100 l (`src/hw_oil_market_feature_pipeline.py`) |
 
-## Notebooks (Übungsfluss)
+Die Dateien unter `data/` sind die lokale Spiegelung der S3-Objekte
+(`s3://oilprice-features/raw/…`): die Pipelines im Cluster lesen und schreiben S3,
+die Kopien im Repo dienen den Tests und dem Fallback, wenn S3 nicht erreichbar ist.
+
+Die Notebooks sind der Übungsfluss (Übungsaufgaben 3–7) und führen in dieselben
+Schritte ein, die `src/` als Pipeline ausführt:
 
 | Notebook | Zweck |
 | --- | --- |
+| `03_data_sources.ipynb` | Datenquellen prüfen (Energie-Dashboard, Commodities-API) |
 | `04_feature_engineering.ipynb` | Features (Rolling, Saisonalität, RT) + 4 Ziellabels |
 | `06_training_pipeline.ipynb` | Training + MLflow (Experiment „oilprice prediction") |
-| `12_data_streaming.ipynb` | Kafka/QuixStreams: Rohdaten streamen |
-| `14_feature_pipeline.ipynb` | Streaming-Feature-Pipeline |
-| `16_feature_view_streaming.ipynb` | Feature-View (Serving) |
-| `19_drift_detection.ipynb` | Drift-/Quality-Detection (evidently) |
+
+Die Streaming-/Drift-Notebooks des Kursflusses (Kafka/QuixStreams, evidently) sind
+nicht mehr im Repo: kein Teil des MVP, und nichts in `src/` oder `k8s/` hängt daran.
 
 ## Pipelines (`src/`)
 
-### S3/MLflow-Flow (bestehend)
-* `feature_pipeline.py` / `upload_train_data.py` – Features → S3 (`s3://oilprice-features/`)
-* `training_pipeline.py` – Training → MLflow, Modell → S3 (`s3://oilprice-models/oil_price_model.pkl`)
-* `inference/app.py` – Flask-App (Modell aus S3)
+### Hopsworks-Flow (Produktionspfad)
+
+* `hw_config.py` – gemeinsame Konfiguration (Namen, Versionen, Feature-Listen, `.env`) + `login()`
+* `hw_feature_pipeline.py` – Feature Group `heizoel24` v3 (online-enabled) + Feature View `heizoel24_weekly` v4; joined die Rhein- und Markt-Treiber per LEFT JOIN auf `date` und trägt sie point-in-time nach (max. `DRIVER_CARRY_DAYS = 3` Tage, nie in die Zukunft)
+* `hw_forward_feature_pipeline.py` – Feature Group `heizoel24_forward` v2 + Feature View `heizoel24_forward_forecast` v3 für zukünftige Zieltermine; Primary Keys `target_date` + `origin_date`, Event Time `origin_date`, `forecast_horizon_days` ist ein Modell-Feature, Treiber heissen `origin_*`
+* `hw_rhein_feature_pipeline.py` – Feature Groups `rhein_level` v1 (täglich, online-enabled) und `rhein_cargo` v1 (monatlich) + Feature Views `rhein_level_daily`, `rhein_cargo_monthly`
+* `hw_oil_market_feature_pipeline.py` – Feature Group `oil_market` v1 (online-enabled) + Feature View `oil_market_daily`
+* `hw_training_pipeline.py` – Training aus der Wochen-Feature View auf `target_week_change` → MLflow + Hopsworks Model Registry `oil_price_model` (+ S3-Export); registriert nur bei geöffnetem Gate
+* `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View auf
+  `forward_target_week_change` (Delta gegenüber `origin_current_price`) → MLflow +
+  Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export); registriert nur,
+  wenn das Persistence-Gate erfüllt ist
+* `model_artifact.py` – schreibt `model_features.json` ins Modell-Artefact, damit die Inferenz exakt die trainierten Spalten verwendet
+* `model_contract.py` – eine Quelle für den Ein-/Ausgabevertrag beider Modelle:
+  Feature-Listen, kategoriale Spalten, Level- vs. Delta-Target, chronologischer Split
+  mit Embargo (`chronological_split`, `forward_chronological_split`),
+  Persistence-Baselines, Volatilitäts-Buckets und die Promotion-Gates. Der Vertrag
+  liegt als JSON im Modell-Artefact und wird beim Servieren gegen den Feature-Vektor
+  geprüft
+* `inference/hw_app.py` – Flask/Gunicorn-App: zuerst Wochen-Feature Vector aus dem
+  Online-Store; bei fehlendem oder futurischem Datum Fallback auf die
+  Forward-Feature-View und `oil_price_forward_model`
+
+### S3-Zugriff (Datendrehscheibe + Übungspfad)
+
 * `s3_credentials.py` – S3-Optionen (`key`/`secret`/`endpoint_url`) ausschliesslich aus
   Umgebungsvariablen: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` und
   `AWS_ENDPOINT_URL` (Alias `S3_ENDPOINT_URL`). Im Cluster kommen sie aus
   `secretKeyRef: s3-credentials`; die Pipelines rufen nie `kubectl` auf und brauchen
   weder kubeconfig noch RBAC auf die Secrets im `rook-ceph`-Namespace
-
-### Hopsworks-Flow (TODO Punkte 6–8)
-* `hw_config.py` – gemeinsame Konfiguration (Names, Features, `.env`) + `login()`
-* `hw_feature_pipeline.py` – Feature Group `heizoel24` (online-enabled) + Feature View `heizoel24_weekly`; joined zusätzlich die Rhein- und Markt-Treiber (v2)
-* `hw_forward_feature_pipeline.py` – Feature Group `heizoel24_forward` + Feature View `heizoel24_forward_forecast` für zukünftige Zieltermine; Primary Keys sind `target_date` + `origin_date`, `forecast_horizon_days` ist ein Modell-Feature; Treiber werden als `origin_*`-Spalten geführt
-* `hw_training_pipeline.py` – Training aus der wöchentlichen Feature View → MLflow + Hopsworks Model Registry (+ S3-Export)
+* `collect_daily_prices.py`, `collect_rhein_levels.py`, `collect_rhein_kaub_history.py`,
+  `collect_rhein_cargo.py`, `collect_oil_market_prices.py` – schreiben die Rohdaten
+  nach `s3://oilprice-features/raw/` (Spiegel lokal unter `data/`)
+* `training_pipeline.py` – Trainings-Pipeline auf `s3://oilprice-features/processed_features.parquet`;
+  teilt denselben Vertrag (`model_contract.py`) und wird von
+  `hw_training_pipeline.py` importiert, ist aber nicht der Serving-Pfad
+* `feature_pipeline.py`, `upload_train_data.py`, `inference/app.py` – frühe
+  Übungs-Skizzen aus dem S3-Flow (lag-Feature, Modell aus S3 laden); sie gehören zum
+  Kursfluss, nicht zum MVP und hängen an keiner CronJob-Kette
 * `hw_forward_training_pipeline.py` – Training aus der Forward-Feature-View auf
   `forward_target_week_change` (Delta gegenüber `origin_current_price`) → MLflow +
   Hopsworks Model Registry `oil_price_forward_model` (+ S3-Export); registriert nur,
@@ -219,23 +295,29 @@ Sept 2001: −30 %) – die Schwelle trifft nur echte Datenlöcher.
 
 ## Training mit Rhein- und Markt-Treibern
 
-Beide Trainings-Pipelines arbeiten auf **Version 2** der Feature Views; v1 bleibt
-unverändert erhalten, damit das zuvor registrierte Modell reproduzierbar bleibt.
+Jede Änderung am Schema bekommt eine neue Version; die alten Versionen bleiben
+unverändert, damit ein bereits registriertes Modell reproduzierbar bleibt. Aktuell
+arbeiten die Pipelines auf:
 
-| Objekt | v1 | v2 |
+| Objekt | Versionen | Inhalt |
 | --- | --- | --- |
-| Feature Group | `heizoel24` v1 (nur Preis/Demand) | `heizoel24` v2 (+ 11 Treiber-Spalten) |
-| Feature View | `heizoel24_weekly` v1 | `heizoel24_weekly` v2 |
-| Feature Group | `heizoel24_forward` v1 | `heizoel24_forward` v2 (+ `origin_*`-Treiber) |
-| Feature View | `heizoel24_forward_forecast` v1 | `heizoel24_forward_forecast` v2 |
+| Feature Group | `heizoel24` v1 → v2 → **v3** | v1 nur Preis/Demand, v2 + 11 Treiber-Spalten, v3 + die Markt-Basis |
+| Feature View | `heizoel24_weekly` v1 → v2 → v3 → **v4** | v4 = v3-Features + Basis-Features, und mit point-in-time carry der Treiber statt NULL an jedem Tag ohne Publikation |
+| Feature Group | `heizoel24_forward` v1 → **v2** | v2 + `origin_*`-Treiber |
+| Feature View | `heizoel24_forward_forecast` v1 → v2 → **v3** | v3 + der `origin_date`-Anker (Split-Anker, kein Modell-Feature) |
 
 **Join:** `src/hw_feature_pipeline.py` liest die Feature-CSVs der Treiber-Pipelines
 (`data/features/rhein_level_features.csv`, `data/features/oil_market_features.csv`)
 und joined sie per **LEFT JOIN auf `date`** in die Preiszeilen – eine Preiszeile
 geht also nie verloren, wenn ein Treiber fehlt (Rhein beginnt 2020-06-22, der
-Markt je nach Quelle 1999/2003/2007). Im Forward-Pipeline sind dieselben Werte
-unter `origin_*` abgelegt, weil eine Forward-Zeile nach `target_date` +
-`origin_date` keyed ist und jeder Treiber zum `origin_date` bekannt sein muss.
+Markt je nach Quelle 1999/2003/2007). Ein Treiber, der an einem Preistag nicht
+publiziert hat, wird höchstens `DRIVER_CARRY_DAYS = 3` Tage aus dem letzten
+vergangenen Publikationstag fortgeschrieben und bleibt danach NULL: ohne diesen
+carry verlor das Wochenmodell ~107 Zeilen pro Jahr, mit einem längeren carry würde
+ein Datenloch als aktueller Wert erscheinen. Nur Vergangenheitswerte, also kein
+Leak. Im Forward-Pipeline sind dieselben Werte unter `origin_*` abgelegt, weil eine
+Forward-Zeile nach `target_date` + `origin_date` keyed ist und jeder Treiber zum
+`origin_date` bekannt sein muss.
 
 **Modell-Features (`hw_config.py`):**
 
@@ -246,7 +328,16 @@ RHEIN_MODEL_FEATURES = ["basel_level_cm", "basel_level_min_7d",
 MARKET_MODEL_FEATURES = ["market_price_chf_100l", "market_price_chf_100l_mean_7d",
                          "market_price_chf_100l_chg_7d_pct", "gasoil_usd_tonne",
                          "usd_chf"]
+MARKET_BASIS_FEATURES = ["market_basis_chf_100l", "market_basis_chf_100l_mean_7d"]
 ```
+
+Das Wochenmodell nutzt damit **25** Features (12 Preis/Demand + 6 Pegel + 5 Markt
++ 2 Basis), das Forward-Modell **24** (13 `origin_*`/`target_*` + 6 + 5). Die Basis
+wird beim Join aus `market_price_chf_100l − current_price` gebildet und ist
+punktgenau auf den Zeilentag: Der Marktpreis ist ein Level, das über die
+Trainingshistorie von ~60 auf ~120 CHF driftet, und beide Modelle regressieren eine
+Änderung – die Basis ist die stationäre Form desselben Treibers, die ein
+RandomForest überhaupt verwenden kann.
 
 `gasoil_chf_tonne` ist das exakte Produkt aus `gasoil_usd_tonne × usd_chf` und
 wird deshalb nicht zusätzlich ins Modell genommen (es bringt Information, aber
@@ -289,17 +380,23 @@ falschen Spalten gefüttert werden.
 
 1. `.env.example` nach `.env` kopieren und ausfüllen (`HOPSWORKS_HOST`,
    `HOPSWORKS_PROJECT`, `HOPSWORKS_API_KEY`, …).
-2. Pipelines in dieser Reihenfolge ausführen (Repo-Root):
+2. Umgebung bauen: `uv venv .venv && source .venv/bin/activate && uv pip install -e .`
+   (Hopsworks verlangt Python < 3.14; `pyproject.toml` pinned `hopsworks[python]>=5.1,<5.2`).
+3. Pipelines in dieser Reihenfolge ausführen (Repo-Root – die Treiber-Pipelines
+   schreiben die Feature-CSVs, die Wochen- und Forward-Pipeline joined):
 
    ```bash
-   python src/collect_rhein_levels.py --bootstrap   # Rhein-Pegel (einmalig) 
+   python src/collect_rhein_levels.py --bootstrap   # Rhein-Pegel (einmalig)
+   python src/collect_rhein_kaub_history.py         # Kaub-Archiv (täglich)
    python src/collect_rhein_cargo.py --all          # Rhein-Fracht (einmalig)
-   python src/hw_feature_pipeline.py          # Wochen-Feature Group + Feature View
-   python src/hw_forward_feature_pipeline.py  # Forward-Feature Group + Feature View
-   python src/hw_rhein_feature_pipeline.py    # rhein_level + rhein_cargo Feature Groups
-   python src/hw_training_pipeline.py         # Wochenmodell trainieren + registrieren
-   python src/hw_forward_training_pipeline.py # Forward-Modell trainieren + registrieren
-   python src/inference/hw_app.py             # Flask-App (Port 5000)
+   python src/collect_oil_market_prices.py          # Markt-Rohdaten
+   python src/hw_rhein_feature_pipeline.py          # rhein_level + rhein_cargo
+   python src/hw_oil_market_feature_pipeline.py     # oil_market
+   python src/hw_feature_pipeline.py                # Wochen-Feature Group + View
+   python src/hw_forward_feature_pipeline.py        # Forward-Feature Group + View
+   python src/hw_training_pipeline.py               # Wochenmodell (Gate)
+   python src/hw_forward_training_pipeline.py       # Forward-Modell (Gate)
+   python src/inference/hw_app.py                   # Flask-App (Port 5000)
    ```
 
    Für lokale Läufe ohne in-cluster MLflow-Server kann `MLFLOW_TRACKING_URI`
@@ -310,19 +407,38 @@ falschen Spalten gefüttert werden.
      python src/hw_forward_training_pipeline.py
    ```
 
-## Verifizierter Forward-Serving-Test
+4. Beide Joins lassen sich abschalten, um den Vergleich zum reinen Preismodell zu
+   wiederholen:
 
-Live-Test gegen den Hopsworks Feature Store:
+   ```bash
+   OILPRICE_USE_RHEIN_FEATURES=0 OILPRICE_USE_MARKET_FEATURES=0 \
+     python src/hw_training_pipeline.py
+   ```
 
-* Feature Group: `heizoel24_forward` v1, online-enabled
-* Feature View: `heizoel24_forward_forecast` v1
-* Primary Keys: `target_date` + `origin_date`
-* Event Time: `origin_date`
-* Online-Lookup für `target_date=2026-11-11`, `origin_date=2026-10-12`
-  liefert `forecast_horizon_days=30`
-* Registriertes Modell: `oil_price_forward_model` v2
-* `/predict` für `2026-11-11` antwortet mit `model=forward_forecast`,
-  `origin_date=2026-10-12` und `forecast_horizon_days=30`
+## Verifizierter Serving-Test (2026-10-25)
+
+Live gegen den Hopsworks Feature Store (`https://oilprice.greeneagle.ai/predict`):
+
+* Wochenpfad `{"date":"2026-10-23"}` → `model=weekly`, 25 Features (u. a.
+  `basel_level_cm=472.0`, `rhein_low_water_flag=1`,
+  `market_price_chf_100l=59.74`, `market_basis_chf_100l=-114.35`,
+  `usd_chf=0.8244`), `prediction_next_week_price=170.49`
+* Forwardpfad `{"date":"2026-11-11"}` → `model=forward_forecast`,
+  `origin_date=2026-10-25`, `forecast_horizon_days=17`,
+  `predicted_week_change=-2.03`, `prediction_next_week_price=172.03`; die Antwort
+  erfüllt die Vertragsgleichung
+  `origin_current_price + predicted_week_change == prediction_next_week_price`
+* Forward-Objekte: Feature Group `heizoel24_forward` v2 (online-enabled), Feature
+  View `heizoel24_forward_forecast` v3, Primary Keys `target_date` + `origin_date`,
+  Event Time `origin_date`
+* Servierende Modelle: `oil_price_model` v23 (Wochenpfad) und
+  `oil_price_forward_model` v23 (Forwardpfad)
+* Der Wochenpfad meldet aktuell kein `predicted_week_change`: `oil_price_model` v23
+  ist ein Artefact mit Legacy-Sidecar (nur `model_features.json` mit 23 Spalten, kein
+  deklariertes Target) und sagt den Level direkt voraus. `hw_app.py` erfindet für
+  solche Artefacts keinen Vertrag. Ein Modell aus der heutigen Trainings-Pipeline
+  bringt den vollen Vertrag mit (25 Features, `target = target_week_change`) und
+  liefert dann `predicted_week_change` plus `prediction_rule`.
 
 ## Inferenz-API
 
@@ -342,28 +458,32 @@ curl -X POST http://localhost:5000/predict \
 }
 ```
 
-Future target dates use the forward-forecast fallback automatically:
+Future target dates use the forward-forecast fallback automatically (verifiziert
+2026-10-25):
 
 ```bash
 curl -X POST http://localhost:5000/predict \
   -H "Content-Type: application/json" \
-  -d '{"date": "2026-11-11", "current_price": 164.89, "current_demand": 12.28}'
+  -d '{"date": "2026-11-11"}'
 ```
 
 ```json
 {
   "date": "2026-11-11",
   "requested_date": "2026-11-11",
-  "origin_date": "2026-10-12",
-  "forecast_horizon_days": 30,
-  "prediction_next_week_price": 158.7,
+  "origin_date": "2026-10-25",
+  "forecast_horizon_days": 17,
+  "predicted_week_change": -2.03,
+  "prediction_next_week_price": 172.03,
   "model": "forward_forecast",
+  "target": "forward_target_week_change",
   "features": {
-    "origin_price_mean_7d": 165.4,
-    "origin_current_price": 164.89,
+    "origin_price_mean_7d": 173.25,
+    "origin_current_price": 174.06,
+    "origin_basel_level_cm": 473.0,
     "target_month": 11,
     "target_season": "Herbst",
-    "forecast_horizon_days": 30
+    "forecast_horizon_days": 17
   }
 }
 ```
@@ -580,10 +700,11 @@ dient nur für lokale Tests und für den Fall, dass S3 nicht erreichbar ist.
 
 ## Wichtige Design-Entscheidungen
 
-* **Feature View** (`heizoel24_weekly`) selektiert nur die 12 Features +
-  `target_next_week_price`. Die weiteren Labels aus Notebook 04
-  (`target_week_change`, `target_trend`, `target_next_month_price`) bleiben in
-  der Feature Group und können dadurch nicht ins Training gelangen
+* **Feature View** (`heizoel24_weekly` v4) selektiert die 25 Modell-Features +
+  `target_next_week_price`. `date` ist Primärkey/Event Time und wird vom
+  Feature-Engineering verbraucht, nicht vom Modell. Die weiteren Labels aus
+  Notebook 04 (`target_week_change`, `target_trend`, `target_next_month_price`)
+  bleiben in der Feature Group und können dadurch nicht ins Training gelangen
   (kein Label-Leakage).
 * **Model Registry (Hopsworks 5.x)**: `Model.save(model_folder)` lädt ein
   Ordner-Verzeichnis von Modell-Dateien als Artifact; mit `version=None` wird
@@ -617,11 +738,23 @@ dient nur für lokale Tests und für den Fall, dass S3 nicht erreichbar ist.
   (forward, nach `origin_date`): kein Trainingslabel darf in den Testzeitraum
   ragen, bei Forward-Zeilen mit 90 Tagen Horizont entsprechend weit.
 * **Promotion-Gate**: beide Pipelines bewerten die Level-MSE gegen die
-  Persistence-Baseline und registrieren/exportieren nur bei
-  `skill_vs_persistence < 1.0`. Exit-Code 2 heisst "blockiert, kein Fehler";
-  `k8s/training-cronjob.yaml` behandelt 2 bewusst als Policy-Ergebnis, damit ein
-  schwaches Modell nicht ins Registry rutscht und die vorherige Version stehen
-  bleibt.
+  Persistence-Baseline ("nächste Woche ist heutiger Preis") auf dem
+  chronologischen Hold-out und registrieren/exportieren nur bei offenem Gate.
+  Wöchentlich gibt es eine strenge und eine kontextuelle Regel: streng bei
+  `skill_vs_persistence < 1.0`; kontextuell bei `skill ≤ 1.05` **und**
+  `skill < 1.0` in den volatile Wochen **und** besser als die
+  Constant-Delta-Baseline. Forward gilt nur die strenge Regel, berichtet nach
+  Horizont-Buckets (1–7 / 8–30 / 31–60 / 61–90 Tage). Exit-Code 2 heisst
+  "blockiert, kein Fehler"; `k8s/training-cronjob.yaml` behandelt 2 bewusst als
+  Policy-Ergebnis, damit ein schwaches Modell nicht ins Registry rutscht und die
+  vorherige Version stehen bleibt.
+* **Treiber-Abdeckung auf dem Hold-out**: ein Treiber wird verworfen, wenn er auf
+  weniger als `MIN_DRIVER_COVERAGE = 50 %` der Hold-out-Tage verfügbar ist.
+  Gemessen wird auf dem Hold-out, nicht über die ganze Historie: die Rhein-Serie
+  beginnt 2020, die Preisserie 2003, und Kaub (WSV publiziert ~30 Tage) ist genau
+  der Fall, den diese Regel ausschliesst – ein Treiber, den das servierte Modell in
+  der Bewertungsperiode nie sehen kann, ist kein Treiber, sondern eine meist leere
+  Spalte, auf die der Wald trotzdem splittet.
 
 ## Kubernetes Deployment
 
@@ -629,13 +762,27 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 `https://oilprice.greeneagle.ai/` erreichbar. Die HTTPRoute verweist auf
 `frontend-service`, und das Frontend ruft intern `inference-service` auf.
 
-Aktuelle Images:
+Aktuelle Images (Stand 2026-10-25, gebaut mit Kaniko im Cluster):
 
 ```text
-ghcr.io/greeneaglecloud/oilprice-frontend:1.15
-ghcr.io/greeneaglecloud/oilprice-inference:1.6
-ghcr.io/greeneaglecloud/oilprice-pipelines:1.9
+ghcr.io/greeneaglecloud/oilprice-frontend:1.16
+ghcr.io/greeneaglecloud/oilprice-inference:1.12
+ghcr.io/greeneaglecloud/oilprice-pipelines:2.6
 ```
+
+Tägliche Kette (Zeiten UTC, alle Jobs mit `activeDeadlineSeconds` und
+`PYTHONUNBUFFERED=1`):
+
+| CronJob | Schedule | Was läuft |
+| --- | --- | --- |
+| `collect-daily-prices` | `30 23 * * *` | Preise (`collect_daily_prices.py`) + Markt (`collect_oil_market_prices.py`) → S3 |
+| `collect-rhein` | `35 23 * * *` | Pegel, Fracht und Kaub-Archiv → S3 (drei unabhängige Schritte) |
+| `feature-pipeline` | `0 0 * * *` | `hw_rhein_feature_pipeline` → `hw_oil_market_feature_pipeline` → `hw_feature_pipeline` → `hw_forward_feature_pipeline` |
+| `training-pipeline` | `0 1 * * *` | `hw_training_pipeline` dann `hw_forward_training_pipeline`; Exit 2 = Gate blockiert, kein Job-Fehler |
+
+Die Manifeste liegen in `k8s/` und werden mit `kubectl` angewendet; die
+Cluster-Infrastruktur (Gateway, MLflow-Server, ObjectStore, ReferenceGrants) liegt
+im separaten Repo `kubernetes/`.
 
 Images im Cluster bauen (Kaniko, kein lokaler Docker-Daemon nötig):
 
@@ -695,30 +842,76 @@ kubectl -n oilprice create job "collect-rhein-manual-$(date +%Y%m%d%H%M%S)" \
   --from=cronjob/collect-rhein
 ```
 
-Erwartete Zeilen aus dem Feature-Lauf (Reihenfolge: Rhein → Markt → weekly → forward):
+Erwartete Zeilen aus dem Feature-Lauf (Reihenfolge: Rhein → Markt → weekly → forward,
+`pipelines:2.6`):
 
 ```text
-rhein_level: 2310 rows 2020-06-22 .. 2026-10-18, Kaub covered for 33 days
-oil_market: 2841 rows 1998-12-24 .. 2026-10-16, sources gasoil=brent_proxy:fred:DCOILBRENTEU fx=ecb:eurofxref
-driver features joined: 11 columns | coverage: basel_level_cm=2301, ... market_price_chf_100l=...
-Feature group 'heizoel24' v2: 8650 rows upserted
-Feature view 'heizoel24_weekly' v2 ready (23 features)
-Feature group 'heizoel24_forward' v2: 370491 rows upserted
+rhein_level: 2316 rows 2020-06-22 .. 2026-10-24, Kaub covered for 39 days
+Feature group 'rhein_level' v1: 2316 rows upserted
+oil_market: 7160 rows 1998-12-23 .. 2026-10-23, sources gasoil=brent_proxy:fred:DCOILBRENTEU fx=ecb:eurofxref
+Feature group 'oil_market' v1: 7160 rows upserted
+driver features joined: 11 columns + 2 derived (carry <= 3d) | coverage: basel_level_cm=2316, ... market_price_chf_100l=6109
+Feature group 'heizoel24' v3: 8666 rows upserted
+Feature view 'heizoel24_weekly' v4 ready (26 features)
+Feature group 'heizoel24_forward' v2: 371179 rows upserted
 ```
 
+`26 features` sind die 25 Modell-Features plus `date` (Primärkey/Event Time).
+`rhein_cargo` meldet Kalendermonate ohne publiziertes Bulletin als
+`skipped N rows without an event time` und überspringt sie – hsfs braucht pro
+Primärkey genau eine Zeile mit Event Time.
+
 Training mit den Treibern (registriert eine neue Modellversion inkl.
-`model_features.json`):
+`model_features.json`, nur wenn das Gate offen ist):
 
 ```bash
 kubectl -n oilprice create job "training-manual-$(date +%Y%m%d%H%M%S)" \
   --from=cronjob/training-pipeline
-kubectl -n oilprice logs job/training-manual-<NAME> --tail=40 | grep -E 'driver features|MSE|Registered'
-# driver features used: 11 (basel_level_cm, ... usd_chf)
-# MSE: ...
-# Registered 'oil_price_model' (version N) in the Hopsworks Model Registry
+kubectl -n oilprice logs job/training-manual-<NAME> 2>&1 | tr '\r' '\n' \
+  | grep -E 'X_train|driver features used|Level MSE|rows, MSE|skill|PROMOTION|Registered|weekly_exit'
+# X_train: (6927, 26) | y_train (delta): (6927,)
+# driver features used: 13 (basel_level_cm, ... usd_chf, market_basis_chf_100l, market_basis_chf_100l_mean_7d)
+# Level MSE: ... | skill vs persistence ...
+#   calm    : ... (skill ...)
+#   normal  : ... (skill ...)
+#   volatile: ... (skill ...)
+# Registered 'oil_price_model' (version N) in the Hopsworks Model Registry   <- nur bei offenem Gate
+# weekly_exit=2 forward_exit=0                                               <- Gate blockiert, Job trotzdem ok
 ```
 
-**Verifizierter Cluster-Lauf (2026-10-18, `pipelines:1.7` → `1.8`):**
+**Verifizierter Lauf mit `pipelines:2.6` (2026-10-25, Feature View v4):**
+
+```text
+# training-pipeline (manuell, 13:37 UTC)
+X_train: (6927, 26) | y_train (delta): (6927,)
+driver features used: 13 (basel_level_cm, basel_level_min_7d, basel_level_zscore_30d,
+  basel_low_days_30d, basel_level_trend_7d, rhein_low_water_flag, market_price_chf_100l,
+  market_price_chf_100l_mean_7d, market_price_chf_100l_chg_7d_pct, gasoil_usd_tonne,
+  usd_chf, market_basis_chf_100l, market_basis_chf_100l_mean_7d)
+Level MSE: 20.87 (R2 0.961) | skill vs persistence 1.058
+  calm    : MSE 1.07 vs persistence 0.18 (skill 6.051)
+  normal  : MSE 2.56 vs persistence 1.82 (skill 1.405)
+  volatile: MSE 58.99 vs persistence 57.18 (skill 1.032)
+baselines: current_price 19.73 | price_mean_7d 37.94 | constant_delta 19.69
+PROMOTION BLOCKED: registry und S3-Export übersprungen
+
+# training-pipeline (manuell, 13:38 UTC)
+Level MSE: 196.53 (MAE 8.04, R2 0.633) | delta MSE: 196.53
+  1_7d: 12103 rows, MSE 53.72 vs persistence 53.36 (skill 1.007)
+  8_30d: 39422 rows, MSE 173.87 vs persistence 175.80 (skill 0.989)
+  31_60d: 11813 rows, MSE 281.85 vs persistence 295.56 (skill 0.954)
+  61_90d: 9933 rows, MSE 358.98 vs persistence 389.33 (skill 0.922)
+Registered 'oil_price_forward_model' (version 23) in the Hopsworks Model Registry
+weekly_exit=2 forward_exit=0
+```
+
+Der Wochenlauf verfehlt beide Regeln: overall 1.058 liegt über der Toleranz 1.05,
+in den volatile Wochen liegt er mit 1.032 über 1.0, und die Level-MSE 20.87 ist
+schlechter als die Constant-Delta-Baseline 19.69. Das Registry behält
+`oil_price_model` v23 (Level-MSE 1.52, registriert 2026-10-24), der Serving-Pfad
+läuft unverändert.
+
+**Historie – Einführung der Treiber-Features (2026-10-18, `pipelines:1.7` → `1.8`):**
 
 ```text
 # collect-daily-prices: Yahoo liefert im Cluster 0 Zeilen (USDCHF=X und BZ=F),
@@ -744,7 +937,7 @@ Registered 'oil_price_model' (version 14)
 Registered 'oil_price_forward_model' (version 10) | MSE: 4.8118
 ```
 
-**Nach dem ECB-Zip-Fix (`pipelines:1.9`, `inference:1.6`, 2026-10-18):**
+**Historie – nach dem ECB-Zip-Fix (`pipelines:1.9`, `inference:1.6`, 2026-10-18):**
 
 ```text
 # collect-daily-prices
@@ -764,15 +957,19 @@ Registered 'oil_price_model' (version 16)
 Registered 'oil_price_forward_model' (version 12) | MSE: 3.9662
 ```
 
-Inferenz gegen das neue Modell (`POST /predict`): `date=2026-10-16` liefert alle 23
-Spalten – `basel_level_cm=472.0`, `rhein_low_water_flag=1`, `market_price_chf_100l=65.59`,
-`market_price_chf_100l_chg_7d_pct=-0.64`, `usd_chf=0.824`, `model=weekly`;
-`date=2026-10-23` läuft über den Forward-Pfad und meldet die 24 `origin_*`-Spalten
-mit `model=forward_forecast`.
+Der Serving-Nachweis von 2026-10-25 steht im Abschnitt „Verifizierter Serving-Test“;
+die beiden Blöcke oben sind der Ausgangspunkt der Treiber-Features und bleiben als
+Verlauf erhalten. Damals lieferte `POST /predict` für `date=2026-10-16` alle 23
+Spalten (`basel_level_cm=472.0`, `rhein_low_water_flag=1`,
+`market_price_chf_100l=65.59`, `usd_chf=0.824`, `model=weekly`), für
+`date=2026-10-23` den Forward-Pfad mit 24 `origin_*`-Spalten.
 
-Die Markt-Abdeckung liegt jetzt bei 6104 von 8659 Preis-Tagen (vorher 1791): der
-Markt-Feed liefert nur Handelstage, Wochenenden und Feiertage bleiben leer – das ist
-gewollt, weil die 7-Tage-Fenster sonst über ein Datenloch blicken würden.
+Die Markt-Abdeckung lag nach dem Zip-Fix bei 6104 von 8659 Preis-Tagen (vorher
+1791), aktuell bei 6109 von 8666. Der Markt-Feed liefert nur Handelstage, Wochenenden
+und Feiertage bleiben leer – das ist gewollt, weil die 7-Tage-Fenster sonst über ein
+Datenloch blicken würden. Seit `pipelines:2.6` wird ein fehlender Handelstag
+höchstens `DRIVER_CARRY_DAYS = 3` Tage aus der Vergangenheit fortgeschrieben, damit
+die Lücken nicht mehr die Hälfte der Trainingszeilen kosten.
 
 Einmaliger Rhein-Bootstrap (volle Pegel-Historie seit 2020 und alle
 Fracht-Bulletins; schreibt `raw/rhein_levels.csv`, `raw/rhein_snapshot.json`,
@@ -803,13 +1000,22 @@ beim Upsert übersprungen – hsfs braucht für den Online-Write pro Primärkey
 genau eine Zeile mit Event Time. Fracht bleibt ein LAG-Feature: sie darf nur mit
 mindestens 49 Tagen Abstand zum Zieltag joined werden, nie als Tagesinformation.
 
-Kontrolle der letzten Pipeline-Läufe:
+Kontrolle der letzten Pipeline-Läufe (die CronJob-Jobs heissen
+`<cronjob>-<unix-minute>`):
 
 ```bash
-kubectl -n oilprice logs job/feature-pipeline-manual-<NAME> --tail=40 | grep -i rhein
-# rhein_level: 2310 rows 2020-06-22 .. 2026-10-18, Kaub covered for 33 days
-# Feature group 'rhein_level' v1: 2310 rows upserted
-# Feature group 'rhein_cargo' v1: 143 rows upserted
+kubectl -n oilprice get jobs --sort-by=.metadata.creationTimestamp | tail -6
+kubectl -n oilprice logs job/feature-pipeline-<SUFFIX> 2>&1 | tr '\r' '\n' \
+  | grep -Ei 'rhein|oil_market|Feature group|Feature view|driver features'
+# rhein_level: 2316 rows 2020-06-22 .. 2026-10-24, Kaub covered for 39 days
+# Feature group 'rhein_level' v1: 2316 rows upserted
+# Feature group 'rhein_cargo' v1: 144 rows upserted
+# Feature group 'oil_market' v1: 7160 rows upserted
+# Feature group 'heizoel24' v3: 8666 rows upserted
+# Feature view 'heizoel24_weekly' v4 ready (26 features)
+
+kubectl -n oilprice logs job/training-pipeline-<SUFFIX> 2>&1 | tr '\r' '\n' \
+  | grep -E 'Level MSE|skill|PROMOTION|Registered|weekly_exit'
 ```
 
 Der Inference-Service stellt denselben Pegel-Snapshot zusätzlich unter `GET
@@ -820,16 +1026,44 @@ kubectl -n oilprice exec deploy/frontend -- \
   python -c "import urllib.request;print(urllib.request.urlopen('http://inference-service:5000/rhein').read().decode()[:200])"
 ```
 
-Verifizierter Live-Test:
+Verifizierter Live-Test (2026-10-25):
 
 ```bash
 curl -sS -X POST https://oilprice.greeneagle.ai/predict \
   -H "Content-Type: application/json" \
-  -d '{"date":"2026-11-11","current_price":164.89,"current_demand":12.28}'
+  -d '{"date":"2026-11-11"}'
 ```
 
-Erwartetes Verhalten: `model=forward_forecast`, `origin_date` ist der aktuell
-verfügbare Feature-Store-Tag, und `forecast_horizon_days` ist die Differenz
-zwischen `target_date` und `origin_date`.
+Antwort (Auszug): `model=forward_forecast`, `origin_date=2026-10-25` (der aktuell
+verfügbare Feature-Store-Tag), `forecast_horizon_days=17` als Differenz von
+`target_date` und `origin_date`, `predicted_week_change=-2.03` und
+`prediction_next_week_price=172.03` – wobei
+`origin_current_price + predicted_week_change` genau die ausgelieferte
+Level-Prognose ist. `current_price`/`current_demand` dürfen mitgegeben werden,
+müssen aber nicht: ohne sie kommen die Realtime-Werte aus dem Online-Feature-Store.
 
-  Modell für Inferenz praktikabel bleibt.
+## Schnellstart (MVP lokal)
+
+```bash
+cp .env.example .env                 # Hopsworks-Zugang eintragen
+uv venv .venv && source .venv/bin/activate
+uv pip install -e .
+
+python src/collect_daily_prices.py            # Rohpreise -> S3 (optional, Daten sind im Repo)
+python src/hw_feature_pipeline.py             # Feature Group + Feature View
+python src/hw_training_pipeline.py            # Wochenmodell (Gate; Exit 2 = blockiert)
+python src/hw_forward_training_pipeline.py    # Forward-Modell (Gate)
+python src/inference/hw_app.py                # Inferenz auf http://localhost:5000
+
+# Frontend: läuft lokal auf demselben Standardport 5000, deshalb mit eigenem Port
+# und expliziter Backend-URL starten
+BACKEND_URL=http://localhost:5000/predict \
+  flask --app src/frontend/app run --port 5001
+
+python -m pytest tests -q                     # 181 Tests, keine Netzwerkzugriffe
+```
+
+Ausführliche Anleitung, Umgebungsvariablen und Cluster-Betrieb: Dokumentation
+neben diesem Repo (`../implementation_plan/08_documentation.md`) sowie die
+Bewertungskriterien mit Erfüllungsstand in
+`../implementation_plan/09_evaluation_criteria.md`.
