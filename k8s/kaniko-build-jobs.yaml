@@ -117,7 +117,7 @@ spec:
         args:
         - --context=dir:///workspace
         - --dockerfile=Dockerfile.inference
-        - --destination=ghcr.io/greeneaglecloud/oilprice-inference:1.9
+        - --destination=ghcr.io/greeneaglecloud/oilprice-inference:1.10
         - --verbosity=info
         resources:
           requests:
@@ -180,7 +180,7 @@ spec:
         args:
         - --context=dir:///workspace
         - --dockerfile=Dockerfile.pipelines
-        - --destination=ghcr.io/greeneaglecloud/oilprice-pipelines:2.2
+        - --destination=ghcr.io/greeneaglecloud/oilprice-pipelines:2.3
         - --verbosity=info
         resources:
           requests:
