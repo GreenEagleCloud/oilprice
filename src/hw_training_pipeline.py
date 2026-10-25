@@ -43,7 +43,13 @@ from model_contract import (
     ModelContract,
     chronological_split,
 )
-from training_pipeline import build_model, evaluate, get_s3_options, save_model_to_s3
+from training_pipeline import (
+    build_model,
+    evaluate,
+    get_s3_options,
+    save_contract_to_s3,
+    save_model_to_s3,
+)
 
 
 def encode_features(X: pd.DataFrame) -> pd.DataFrame:  # pragma: no cover - removed
@@ -220,10 +226,13 @@ def main() -> int:
     print(f"Registered '{MODEL_NAME}' (version {registered.version}) in the Hopsworks Model Registry")
 
     # 4) Optional: export to S3 for the legacy inference app
-    #    (skipped gracefully when no cluster access is available)
+    #    (skipped gracefully when no cluster access is available). The contract
+    #    sidecar goes with the pickle: without it the app cannot tell this delta
+    #    model from a pre-contract level model.
     try:
         s3_options = get_s3_options()
         save_model_to_s3(model, s3_options)
+        save_contract_to_s3(contract, s3_options)
     except Exception as e:
         print(f"Note: S3 export skipped: {e}")
 

@@ -55,7 +55,12 @@ from hw_config import (  # noqa: E402
     RT_FEATURES,
     login,
 )
-from model_artifact import read_model_contract, read_model_features  # noqa: E402
+from model_artifact import (  # noqa: E402
+    contract_from_payload,
+    read_model_contract,
+    read_model_features,
+    sidecar_keys,
+)
 from model_contract import (  # noqa: E402
     DELTA_TARGET,
     FORWARD_DELTA_TARGET,
@@ -117,12 +122,13 @@ def _category_codes() -> dict:
 
 
 def _encode_vector(vector: pd.DataFrame) -> pd.DataFrame:
-    """Integer-code non-numeric columns (forward model only).
+    """Integer-code non-numeric columns (pre-contract artifacts only).
 
-    The weekly model no longer goes through here: its pipeline one-hot encodes
-    `season` from the raw strings, so integer-coding it here would silently map
-    every category onto the wrong one-hot block. Only the forward model, which is
-    still trained with integer codes, uses this helper.
+    Used for an artifact whose sidecar predates src/model_contract.py: it was
+    fitted on integer category codes, so its estimator cannot see raw strings.
+    A contract-aware artifact must NOT go through here - its persisted pipeline
+    one-hot encodes the raw strings, and integer-coding them would map every
+    category onto the wrong one-hot block.
     """
     X = vector.copy()
     for col, mapping in _category_codes().items():
@@ -171,6 +177,37 @@ def _default_date() -> str:
     return pd.to_datetime(dates).max().strftime("%Y-%m-%d")
 
 
+def _read_s3_sidecar(s3, model_key: str):
+    """(contract, features) of an S3 model artifact, (None, None) when absent.
+
+    The S3 fallback has no downloaded folder, so the sidecar is read straight from
+    the bucket. A missing or legacy sidecar means the artifact predates
+    src/model_contract.py: integer-coded categories, prediction = price level. The
+    feature list is still honoured for a legacy sidecar - only the contract is
+    refused.
+    """
+    for key in sidecar_keys(model_key):
+        try:
+            body = s3.get_object(Bucket=MODEL_BUCKET, Key=key)["Body"].read()
+            payload = json.loads(body.decode("utf-8"))
+        except Exception:
+            continue
+        features = [str(name) for name in payload.get("features") or []] or None
+        contract = contract_from_payload(payload)
+        if contract is not None:
+            print(
+                f"Contract sidecar s3://{MODEL_BUCKET}/{key}: "
+                f"{len(contract.features)} features, target={contract.target}"
+            )
+            return contract, features
+        print(
+            f"Sidecar s3://{MODEL_BUCKET}/{key} predates the contract; "
+            "legacy serving (integer-coded categories)"
+        )
+        return None, features
+    return None, None
+
+
 def _load_model():
     """Model from the Hopsworks Model Registry (latest version), S3 fallback."""
     global _model, _model_features, _model_contract
@@ -207,6 +244,7 @@ def _load_model():
         try:
             response = s3.get_object(Bucket=MODEL_BUCKET, Key=key)
             _model = joblib.load(BytesIO(response["Body"].read()))
+            _model_contract, _model_features = _read_s3_sidecar(s3, key)
             print(f"Model loaded from s3://{MODEL_BUCKET}/{key}")
             return _model
         except Exception as e:
@@ -320,9 +358,12 @@ def _load_forward_model():
     try:
         response = s3.get_object(Bucket=MODEL_BUCKET, Key=FORWARD_MODEL_FILE_NAME)
         _forward_model = joblib.load(BytesIO(response["Body"].read()))
-        # An S3 artifact carries no contract sidecar, so it is served with the
-        # legacy semantics: the pickle predicts the price level directly.
-        _forward_model_contract = None
+        # The sidecar decides the semantics: a contract sidecar means the pickle
+        # predicts the delta from the origin price, a legacy or missing one means
+        # it predicts the price level directly.
+        _forward_model_contract, _forward_model_features = _read_s3_sidecar(
+            s3, FORWARD_MODEL_FILE_NAME
+        )
         print(f"Forward model loaded from s3://{MODEL_BUCKET}/{FORWARD_MODEL_FILE_NAME}")
         return _forward_model
     except Exception as e:
@@ -338,6 +379,22 @@ def _prepare_forward_vector(vector: pd.DataFrame, contract):
     contract and passed through unchanged. Only an artifact that predates the
     contract was trained on integer category codes; that path is kept so the model
     currently in the registry keeps serving until it is retrained.
+    """
+    if contract is None:
+        return _encode_vector(vector)
+    validate_features(vector, contract)
+    return vector
+
+
+def _prepare_weekly_vector(vector: pd.DataFrame, contract):
+    """Encode the weekly feature vector the way this artifact was trained.
+
+    A contract-aware weekly artifact one-hot encodes `season` from the raw strings
+    inside its persisted Pipeline, so the vector is validated and passed through.
+    An artifact whose sidecar predates the contract was fitted on integer category
+    codes: its ColumnTransformer has an empty categorical branch and `season` sits
+    in the numeric passthrough, so raw strings reach the RandomForest and die on
+    "could not convert string to float: 'Herbst'".
     """
     if contract is None:
         return _encode_vector(vector)
@@ -573,18 +630,18 @@ def predict():
                 404,
             )
         # 3) prediction with the model from the Model Registry (or S3 fallback).
-        #    The weekly pipeline carries its own encoders: `season` stays a raw
-        #    string and the point-in-time seasonal index is recomputed inside the
-        #    model, so the vector is passed through unmodified - integer-coding it
-        #    here would silently land every category on the wrong one-hot block.
+        #    A contract-aware weekly artifact carries its own encoders: `season`
+        #    stays a raw string and the point-in-time seasonal index is recomputed
+        #    inside the model. An artifact without a contract sidecar was fitted on
+        #    integer category codes, so it still needs the integer-coding - the
+        #    artifact decides, not the feature view.
         model = _load_model()
         contract = _model_contract
         features = _model_features or (contract.features if contract else None)
         X = _select_model_features(vector, features)
         if "date" not in X.columns:
             X = X.assign(date=entry_date)
-        if contract is not None:
-            validate_features(X, contract)
+        X = _prepare_weekly_vector(X, contract)
 
         raw = float(model.predict(X)[0])
         if contract is not None and contract.target == DELTA_TARGET:

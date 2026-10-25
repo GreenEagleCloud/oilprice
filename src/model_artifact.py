@@ -14,17 +14,24 @@ import json
 from pathlib import Path
 
 FEATURES_FILE_NAME = "model_features.json"
+# Written into the sidecar whenever a full ModelContract is stored with it. It is
+# the only reliable way to tell a contract artifact from one that predates
+# src/model_contract.py, because a legacy sidecar is indistinguishable by content:
+# it just lists `features`.
+CONTRACT_VERSION = 1
 
 
 def write_model_features(model_dir, model_name: str, features: list, contract=None) -> None:
     """Write <model_dir>/model_features.json for a registered model folder.
 
     `contract` is an optional src/model_contract.ModelContract. When present the
-    sidecar carries the whole input/output contract, not just the column list.
+    sidecar carries the whole input/output contract plus `contract_version`, the
+    marker read_model_contract uses to tell a contract artifact from a legacy one.
     """
     if contract is not None:
         payload = contract.to_dict()
         payload["model_name"] = model_name
+        payload["contract_version"] = CONTRACT_VERSION
     else:
         payload = {"model_name": model_name, "features": [str(name) for name in features]}
     Path(model_dir, FEATURES_FILE_NAME).write_text(
@@ -44,18 +51,49 @@ def read_model_features(folder) -> list | None:
 def read_model_contract(folder):
     """Return the full ModelContract of a downloaded model folder, if present.
 
-    Older artifacts only list `features`; those are upgraded to a contract with
-    the legacy level target so serving keeps working until they are retrained.
+    Returns None for an artifact whose sidecar predates the contract (it lists
+    only `features`). That distinction is not cosmetic: a legacy artifact was
+    fitted on integer-coded category strings, so the serving app must integer-code
+    its vector and must treat the prediction as a price level. Inventing a
+    contract for it claims the opposite - the app then hands the estimator raw
+    strings and it dies on "could not convert string to float: 'Herbst'".
     """
-    from model_contract import LEVEL_TARGET, ModelContract
+    return contract_from_payload(_read_payload(folder))
 
-    payload = _read_payload(folder)
-    if payload is None:
+
+def contract_from_payload(payload):
+    """Rebuild a ModelContract from a sidecar payload, None for a legacy sidecar.
+
+    Shared by the Model Registry path (read_model_contract) and the S3 fallback,
+    which reads the sidecar straight out of the bucket instead of a downloaded
+    model folder.
+    """
+    from model_contract import ModelContract
+
+    if not payload or not payload.get("features"):
         return None
-    if not payload.get("features"):
+    if payload.get("contract_version") != CONTRACT_VERSION:
         return None
-    payload.setdefault("target", LEVEL_TARGET)
     return ModelContract.from_dict(payload)
+
+
+def sidecar_key(model_key: str) -> str:
+    """Sidecar key that belongs to a model key in the model bucket.
+
+    `oil_price_forward_model.pkl` -> `oil_price_forward_model_features.json`.
+    """
+    stem = model_key.rsplit(".", 1)[0]
+    return f"{stem}_features.json"
+
+
+def sidecar_keys(model_key: str) -> list[str]:
+    """Sidecar keys that can belong to a model key in the model bucket.
+
+    The weekly pipeline exports the plain `model_features.json`
+    (src/training_pipeline.py) while the forward pipeline exports a key named
+    after its pickle, so both spellings are candidates.
+    """
+    return [sidecar_key(model_key), FEATURES_FILE_NAME]
 
 
 def _read_payload(folder) -> dict | None:

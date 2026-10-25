@@ -29,6 +29,7 @@ is chronological over `origin_date` with an embargo of
 forecast_horizon_days + 7 - see src/model_contract.forward_chronological_split.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -65,7 +66,7 @@ from hw_config import (
     forward_model_features,
     login,
 )
-from model_artifact import write_model_features
+from model_artifact import CONTRACT_VERSION, write_model_features
 from model_contract import (
     FORWARD_DELTA_TARGET,
     FORWARD_LEVEL_TARGET,
@@ -254,14 +255,33 @@ def register_forward_model(project, model, metrics: dict, features: list, contra
         return reg_model.save(str(model_dir))
 
 
-def save_forward_model_to_s3(model, s3_options: dict) -> None:
+def save_forward_model_to_s3(model, s3_options: dict, contract=None) -> None:
+    """Export the forward pickle plus its contract sidecar to the model bucket.
+
+    hw_app.py falls back to S3 when the Model Registry is unreachable, and there
+    it has no downloaded folder to read the sidecar from - so the sidecar has to
+    sit next to the pickle in the bucket, otherwise a delta model would be served
+    as if it predicted a price level.
+    """
     import s3fs
+
+    from model_artifact import sidecar_key
 
     s3 = s3fs.S3FileSystem(**s3_options)
     path = f"s3://{MODEL_BUCKET}/{FORWARD_MODEL_FILE_NAME}"
     with s3.open(path, "wb") as f:
         joblib.dump(model, f)
     print(f"Forward model saved to {path}")
+
+    if contract is None:
+        return
+    payload = contract.to_dict()
+    payload["model_name"] = FORWARD_MODEL_NAME
+    payload["contract_version"] = CONTRACT_VERSION
+    sidecar = f"s3://{MODEL_BUCKET}/{sidecar_key(FORWARD_MODEL_FILE_NAME)}"
+    with s3.open(sidecar, "wb") as f:
+        f.write(json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8"))
+    print(f"Forward contract saved to {sidecar}")
 
 
 
@@ -430,7 +450,7 @@ def main() -> int:
 
         try:
             s3_options = get_s3_options()
-            save_forward_model_to_s3(model, s3_options)
+            save_forward_model_to_s3(model, s3_options, contract)
         except Exception as e:
             print(f"Note: S3 export skipped: {e}")
 
