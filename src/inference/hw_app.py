@@ -84,10 +84,11 @@ _forward_model_contract = None
 def _category_codes() -> dict:
     """Map non-numeric feature values to their training-time category codes.
 
-    LEGACY path, only for a forward artifact that was trained before the model
-    contract existed (see `_prepare_forward_vector`). The current pipelines one-hot
-    encode the raw category strings inside the persisted Pipeline, so integer
-    coding a contract-aware artifact would map every category onto the wrong block.
+    LEGACY path, only for an artifact whose sidecar predates the model contract
+    (see `_prepare_forward_vector` and `_prepare_weekly_vector`). A contract-aware
+    artifact one-hot encodes the raw category strings inside its persisted
+    Pipeline, so integer-coding it here would map every category onto the wrong
+    one-hot block.
 
     The codes follow the sorted unique values of the FULL training dataset, so the
     mapping is computed from that dataset (FEATURES_LOCAL_CSV) rather than from a
