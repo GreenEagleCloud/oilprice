@@ -56,16 +56,17 @@ DATA_FILE = REPO_ROOT / "data" / "heizoel24_heizoel_daily_ch_full.csv"
 FEATURES_LOCAL_CSV = REPO_ROOT / "data" / "features" / "heizoel24_features.csv"
 
 FEATURE_GROUP_NAME = "heizoel24"
-# v2 = v1 columns + the joined Rhine/market driver columns. v1 (price features
-# only) is kept so the previously served model stays reproducible.
-FEATURE_GROUP_VERSION = 2
+# v3 = v2 columns + the stationary local-vs-market basis (see
+# MARKET_BASIS_FEATURES). A Hopsworks feature group cannot gain columns after it
+# is created, so a new version is the only way to store a new feature; v1/v2 stay
+# untouched so the models already served from them remain reproducible.
+FEATURE_GROUP_VERSION = 3
 FEATURE_VIEW_NAME = "heizoel24_weekly"
-# v3 = v2 features + the `date` anchor. Hopsworks does not expose a feature
-# group's primary key in a feature view unless it is selected explicitly, and the
-# training pipeline cannot build a chronological split - or keep the seasonal
-# index point-in-time - without it. v1/v2 stay untouched so the models already
-# served from them remain reproducible.
-FEATURE_VIEW_VERSION = 3
+# v4 = v3 + the basis features, and with the driver columns carried point-in-time
+# instead of left NULL on every day a driver did not publish (see
+# DRIVER_CARRY_DAYS). v1/v2/v3 stay untouched so the models already served from
+# them remain reproducible.
+FEATURE_VIEW_VERSION = 4
 
 FORWARD_FEATURE_GROUP_NAME = "heizoel24_forward"
 FORWARD_FEATURE_GROUP_VERSION = 2
@@ -145,6 +146,27 @@ MARKET_MODEL_FEATURES = [
     "usd_chf",
 ]
 
+# The local-vs-market basis: what the Swiss shelf price costs ABOVE the landed
+# market reference on the same day. Both models regress a CHANGE, and a
+# RandomForest cannot extrapolate a level - `market_price_chf_100l` is a level
+# that drifts from ~60 to ~120 CHF over the training history, so the forest can
+# only memorise where it sat during training. The basis is stationary around the
+# local refining/logistics margin, which is the part that actually moves price.
+#
+# Derived at join time (the market feature group has no local price column) and
+# point-in-time by construction: both operands are known on the row's own date.
+MARKET_BASIS_FEATURES = [
+    "market_basis_chf_100l",
+    "market_basis_chf_100l_mean_7d",
+]
+
+# How far a driver may be carried forward when its source did not publish that
+# day. The market series exist on trading days only, so Sat/Sun/Mon must carry
+# Friday; a longer carry would paper over a data outage with a stale value and
+# serve a months-old gauge reading as today's. Same rule in both feature
+# pipelines so training and serving cannot drift apart.
+DRIVER_CARRY_DAYS = 3
+
 
 def _flag(name: str) -> bool:
     return os.getenv(name, "1").strip().lower() not in ("0", "false", "no", "off")
@@ -162,7 +184,7 @@ def weekly_model_features() -> list:
     if USE_RHEIN_FEATURES:
         columns += RHEIN_MODEL_FEATURES
     if USE_MARKET_FEATURES:
-        columns += MARKET_MODEL_FEATURES
+        columns += MARKET_MODEL_FEATURES + MARKET_BASIS_FEATURES
     return columns
 
 

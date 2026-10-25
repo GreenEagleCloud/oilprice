@@ -76,6 +76,14 @@ _CORE_FEATURE_LABELS = {
     "market_price_chf_100l_chg_7d_pct": ("Ölmarkt-Referenzpreis-Änderung (7 Tage)", "%", "Ölmarkt"),
     "gasoil_usd_tonne": ("ICE-Gasoil-Futures", "USD/Tonne", "Ölmarkt"),
     "usd_chf": ("USD/CHF-Wechselkurs", "CHF/USD", "Ölmarkt"),
+    # The stationary basis: what the heizoel24 shelf price costs above the landed
+    # market reference on the same day. Shown because the model is trained on it.
+    "market_basis_chf_100l": (
+        "Aufschlag des Lokalpreises über der Markt-Referenz", "CHF/100l", "Ölmarkt"
+    ),
+    "market_basis_chf_100l_mean_7d": (
+        "Aufschlag des Lokalpreises (7-Tage-Mittel)", "CHF/100l", "Ölmarkt"
+    ),
 }
 
 # The forward model keys every driver by origin_date, so those columns carry an

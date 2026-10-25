@@ -39,6 +39,7 @@ from hsfs import feature_group
 
 from hw_config import (
     DATA_FILE,
+    DRIVER_CARRY_DAYS,
     FORWARD_EVENT_TIME,
     FORWARD_FEATURE_GROUP_NAME,
     FORWARD_FEATURE_GROUP_VERSION,
@@ -172,8 +173,10 @@ def _attach_driver_columns(daily: pd.DataFrame) -> tuple[pd.DataFrame, list]:
     """Merge the driver features onto the daily calendar and carry them forward.
 
     The market series only exist on trading days, so a weekend/Sunday price day
-    must still carry Friday's market level. ffill(limit=3) bounds that carry to
-    a normal weekend gap instead of inventing values across a data outage.
+    must still carry Friday's market level. The carry is bounded to
+    hw_config.DRIVER_CARRY_DAYS - the same rule the weekly feature pipeline uses -
+    so a normal weekend gap is bridged but a data outage stays visible as a hole,
+    and training and serving can never disagree about what a driver value means.
     """
     drivers, columns = _driver_frames()
     if not columns:
@@ -181,7 +184,7 @@ def _attach_driver_columns(daily: pd.DataFrame) -> tuple[pd.DataFrame, list]:
 
     out = daily.merge(drivers, on="date", how="left")
     for col in columns:
-        out[col] = out[col].ffill(limit=3)
+        out[col] = out[col].ffill(limit=DRIVER_CARRY_DAYS)
     return out, columns
 
 

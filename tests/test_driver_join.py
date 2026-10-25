@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
@@ -49,6 +50,10 @@ def test_weekly_feature_list_contains_the_drivers():
     assert features[: len(weekly.FEATURES)] == weekly.FEATURES
     for col in hw_config.RHEIN_MODEL_FEATURES + hw_config.MARKET_MODEL_FEATURES:
         assert col in features
+    # the stationary basis is a model feature too - it is the form of the market
+    # driver a tree can use (the level itself drifts across the training history)
+    for col in hw_config.MARKET_BASIS_FEATURES:
+        assert col in features
     # the label must never be part of the feature list
     assert hw_config.TARGET not in features
 
@@ -65,11 +70,47 @@ def test_attach_drivers_keeps_every_price_row():
     assert len(out) == 10
     # 'date' is the primary key of the feature group and must survive the join
     assert out.columns.tolist()[0] == "date"
-    assert out["basel_level_cm"].notna().sum() == 4
-    assert out["market_price_chf_100l"].notna().sum() == 4
-    # drivers are appended after the existing columns, labels stay in place
-    assert out.columns.tolist()[-5:] == hw_config.MARKET_MODEL_FEATURES
+    # 4 publishing days (05-08) plus the two following days (09, 10) that lie
+    # within DRIVER_CARRY_DAYS of the last publishing day
+    assert out["basel_level_cm"].notna().sum() == 6
+    assert out["market_price_chf_100l"].notna().sum() == 6
+    # the four days BEFORE the first driver row stay NULL: a carry only ever
+    # copies a PAST value, never a future one
+    assert out["basel_level_cm"].iloc[:4].isna().all()
+    # the derived basis follows the market driver and lands after the joined columns
+    assert out.columns.tolist()[-2:] == hw_config.MARKET_BASIS_FEATURES
     assert "target_next_week_price" in out.columns
+
+
+def test_attach_drivers_carries_only_within_the_limit():
+    """A gap longer than DRIVER_CARRY_DAYS stays NULL instead of inventing data."""
+    dates = pd.date_range("2026-01-01", periods=12, freq="D")
+    dataset = pd.DataFrame({"date": dates})
+    for col in weekly.FEATURES:
+        dataset[col] = np.arange(len(dates), dtype="float64")
+    for col in weekly.LABELS:
+        dataset[col] = np.arange(len(dates), dtype="float64")
+    drivers = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=1, freq="D"),
+            "market_price_chf_100l": [60.0],
+            "market_price_chf_100l_mean_7d": [59.0],
+        }
+    )
+    out = weekly.attach_drivers(dataset, drivers, ["market_price_chf_100l",
+                                                   "market_price_chf_100l_mean_7d"])
+    limit = hw_config.DRIVER_CARRY_DAYS
+    assert out["market_price_chf_100l"].iloc[limit] == 60.0
+    assert np.isnan(out["market_price_chf_100l"].iloc[limit + 1])
+
+
+def test_attach_drivers_derives_the_stationary_basis():
+    out = weekly.attach_drivers(_dataset(), _drivers(), hw_config.MARKET_MODEL_FEATURES)
+    row = out[out["date"] == pd.Timestamp("2026-01-05")].iloc[0]
+    assert row["market_basis_chf_100l"] == pytest.approx(60.0 - row["current_price"])
+    assert row["market_basis_chf_100l_mean_7d"] == pytest.approx(59.0 - row["current_price"])
+    # no market driver -> no basis, not a zero margin
+    assert np.isnan(out["market_basis_chf_100l"].iloc[0])
 
 
 def test_read_driver_csv_fills_missing_file_with_nulls(tmp_path):

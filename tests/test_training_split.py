@@ -206,6 +206,65 @@ def test_validate_features_rejects_ascii_season():
         validate_features(frame[tp.MODEL_INPUTS], ModelContract(features=tp.MODEL_INPUTS))
 
 
+def test_volatility_buckets_judge_each_week_against_its_own_baseline():
+    """Calm weeks must be scored against persistence, moving weeks against their own MSE.
+
+    The hold-out here is built so the answer is known: the model does nothing in
+    the calm third (exactly persistence) and predicts the moving thirds perfectly.
+    A single overall skill would average the two into something meaningless.
+    """
+    from model_contract import volatility_buckets
+
+    n = 90
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+    price = np.full(n, 100.0)
+    truth = price.copy()
+    truth[30:60] = 105.0   # normal weeks: moved 5
+    truth[60:] = 120.0     # volatile weeks: moved 20
+
+    predicted = price.copy()      # calm weeks: 'next week is today'
+    predicted[30:] = truth[30:]   # moving weeks: predicted exactly
+
+    test = pd.DataFrame({"date": dates, "current_price": price, LEVEL_TARGET: truth})
+    buckets = volatility_buckets(test, predicted)
+
+    assert set(buckets) == {"calm", "normal", "volatile"}
+    assert buckets["calm"]["rows"] == 30
+    assert buckets["calm"]["skill"] == pytest.approx(1.0)
+    assert buckets["normal"]["skill"] == pytest.approx(0.0)
+    assert buckets["volatile"]["skill"] == pytest.approx(0.0)
+    # the buckets are judged against the persistence of their own rows
+    assert buckets["volatile"]["persistence_mse"] > buckets["calm"]["persistence_mse"]
+
+
+def test_volatility_buckets_need_the_level_columns():
+    from model_contract import volatility_buckets
+
+    frame = pd.DataFrame({"current_price": [1.0, 2.0]})
+    with pytest.raises(ContractError, match="needed to bucket the hold-out"):
+        volatility_buckets(frame, [1.0, 2.0])
+
+
+def test_evaluate_reports_the_buckets_alongside_the_overall_skill():
+    frame = _frame()
+    model = tp.build_model(frame[tp.MODEL_INPUTS])
+    model.fit(frame[tp.MODEL_INPUTS], frame[DELTA_TARGET])
+    train, test, _ = chronological_split(
+        frame, test_size=0.2, horizon_days=TARGET_HORIZON_DAYS
+    )
+    metrics = tp.evaluate(model, train, test, input_columns=tp.MODEL_INPUTS)
+
+    assert set(metrics["buckets"]) <= {"calm", "normal", "volatile"}
+    total_rows = sum(b["rows"] for b in metrics["buckets"].values())
+    assert total_rows == len(test)
+    # the weighted average of the bucket MSEs is exactly the overall MSE
+    weighted = sum(b["level_mse"] * b["rows"] for b in metrics["buckets"].values()) / total_rows
+    assert weighted == pytest.approx(metrics["level_mse"])
+    # persistence is one of the reference baselines the gate compares against
+    assert "current_price" in metrics["baselines"]
+    assert "constant_delta" in metrics["baselines"]
+
+
 def test_serving_frame_matches_the_trained_contract():
     """The frame hw_app builds must be accepted by the trained pipeline."""
     frame = _frame()

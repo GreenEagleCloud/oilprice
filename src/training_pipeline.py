@@ -52,6 +52,7 @@ from model_contract import (
     chronological_split,
     persistence_baselines,
     validate_features,
+    volatility_buckets,
 )
 from s3_credentials import get_s3_options  # re-exported: hw_*_training_pipeline imports it from here
 from seasonal_index import ExpandingSeasonalIndex
@@ -234,6 +235,11 @@ def evaluate(model: Pipeline, train: pd.DataFrame, test: pd.DataFrame,
     reference = baselines.get("current_price", float("nan"))
     skill = level_mse / reference if reference else float("inf")
 
+    # The single skill number is the average over weeks that moved and weeks
+    # that did not. Bucketing the same hold-out shows which of the two the model
+    # is actually failing on - see model_contract.volatility_buckets.
+    buckets = volatility_buckets(test, level_pred)
+
     # Train-side sanity: the model must at least fit the window it was trained on.
     train_delta = model.predict(train[cols])
     train_level = train["current_price"].to_numpy(dtype="float64") + train_delta
@@ -247,6 +253,7 @@ def evaluate(model: Pipeline, train: pd.DataFrame, test: pd.DataFrame,
         "train_level_mse": train_level_mse,
         "baselines": baselines,
         "skill_vs_persistence": skill,
+        "buckets": buckets,
     }
 
 

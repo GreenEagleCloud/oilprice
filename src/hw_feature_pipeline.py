@@ -23,6 +23,7 @@ import pandas as pd
 from hw_config import (
     DATA_FILE,
     DATE_COLUMN,
+    DRIVER_CARRY_DAYS,
     FEATURES,
     FEATURES_LOCAL_CSV,
     FEATURE_GROUP_NAME,
@@ -30,6 +31,7 @@ from hw_config import (
     FEATURE_VIEW_NAME,
     FEATURE_VIEW_VERSION,
     LABELS,
+    MARKET_BASIS_FEATURES,
     MARKET_FEATURES_CSV,
     MARKET_MODEL_FEATURES,
     RHEIN_LEVEL_FEATURES_CSV,
@@ -201,8 +203,54 @@ def load_driver_features() -> tuple[pd.DataFrame, list]:
     return merged, columns
 
 
+# Which market column each basis column is derived from. The names come from
+# hw_config.MARKET_BASIS_FEATURES so the derived columns can never drift away
+# from the list the feature view and the model contract select.
+BASIS_SOURCES = {
+    "market_basis_chf_100l": "market_price_chf_100l",
+    "market_basis_chf_100l_mean_7d": "market_price_chf_100l_mean_7d",
+}
+
+
+def add_market_basis(frame: pd.DataFrame, price_col: str = "current_price") -> list:
+    """Derive the stationary local-vs-market basis on the joined frame.
+
+    `market_price_chf_100l` is a level that drifts across the training history;
+    both models regress a CHANGE, and a RandomForest cannot extrapolate a level.
+    The basis - what the Swiss shelf price costs above the landed market
+    reference on the same day - is stationary around the local margin, so it is
+    the form of the driver a tree can actually use.
+
+    Point-in-time by construction: both operands belong to the row's own date.
+    Returns the basis columns that were produced ([] when the market driver is
+    disabled or absent).
+    """
+    if price_col not in frame.columns:
+        return []
+    produced = []
+    for name in MARKET_BASIS_FEATURES:
+        source = BASIS_SOURCES.get(name)
+        if source and source in frame.columns:
+            frame[name] = frame[source] - frame[price_col]
+            produced.append(name)
+    return produced
+
+
 def attach_drivers(dataset: pd.DataFrame, drivers: pd.DataFrame, columns: list) -> pd.DataFrame:
-    """LEFT-join the driver features onto the price rows (never drops a row)."""
+    """LEFT-join the driver features onto the price rows and carry them forward.
+
+    A driver that did not publish on a price day must neither delete the price
+    row nor leave a hole the training pipeline drops. The market series exist on
+    trading days only, so an exact-date join leaves ~107 NULL days a year, and
+    requiring every driver non-null left the weekly model with 1 615 of 8 659
+    labelled rows - the single largest reason it lost to persistence.
+
+    The value of the most recent PAST publishing day is therefore carried for at
+    most DRIVER_CARRY_DAYS days (a normal weekend/holiday gap) and stays NULL
+    beyond that, so a real data outage stays visible as a hole instead of being
+    papered over with a stale reading. Only past values are ever used, so the
+    carry cannot leak the future into a training row.
+    """
     if not columns:
         return dataset
 
@@ -210,12 +258,24 @@ def attach_drivers(dataset: pd.DataFrame, drivers: pd.DataFrame, columns: list) 
     for col in columns:
         if col not in out.columns:
             out[col] = np.nan
+
+    out = out.sort_values("date").reset_index(drop=True)
+    for col in columns:
+        out[col] = out[col].ffill(limit=DRIVER_CARRY_DAYS)
+
+    basis = add_market_basis(out)
     # 'date' stays the first column: it is the primary key / event time of the
     # feature group and must survive the reordering.
-    out = out[["date"] + FEATURES + LABELS + columns]
+    out = out[[
+        "date", *FEATURES, *LABELS,
+        *[c for c in columns if c in out.columns],
+        *[c for c in basis if c not in columns],
+    ]]
 
-    coverage = ", ".join(f"{col}={int(out[col].notna().sum())}" for col in columns)
-    print(f"driver features joined: {len(columns)} columns | coverage: {coverage}")
+    coverage = ", ".join(f"{col}={int(out[col].notna().sum())}" for col in out.columns
+                         if col in columns or col in basis)
+    print(f"driver features joined: {len(columns)} columns + {len(basis)} derived "
+          f"(carry <= {DRIVER_CARRY_DAYS}d) | coverage: {coverage}")
     return out
 
 
