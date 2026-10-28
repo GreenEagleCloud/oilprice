@@ -6,11 +6,29 @@ metadata:
 spec:
   # daily at 23:30, before the feature pipeline (00:00) and training pipeline (01:00)
   schedule: "30 23 * * *"
+  # Two overlapping collectors would both read, merge and write
+  # s3://oilprice-features/raw/oil_data.csv.
+  concurrencyPolicy: Forbid
+  # Emit an event if the job cannot start within 30 min of its scheduled time
+  # (image pull problems, node pressure) instead of skipping the run silently.
+  startingDeadlineSeconds: 1800
+  # The default failedJobsHistoryLimit is 1. During the 2026-10-25..27 outage the
+  # failed Jobs of the two earlier nights had already been replaced, so a
+  # three-day outage looked like one bad night and was undiagnosable. Keep
+  # enough failed history to see the pattern.
+  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 3
   jobTemplate:
     spec:
       # bounds a stuck upstream request (Yahoo/ECB/FRED) - the collector itself
       # has no hard timeout because yfinance must run in the main thread
       activeDeadlineSeconds: 1800
+      # Both collector scripts now retry their upstreams internally (heizoel24,
+      # Yahoo, ECB, FRED), so a transient outage is handled inside the run. A pod
+      # that still fails is broken for a reason the kubelet backoff (10s, 20s,
+      # 40s ...) will not fix: on 2026-10-27 the default limit burned 7 pods in
+      # 5m43s and produced seven S3 reads and no write. Fail fast and visibly.
+      backoffLimit: 2
       template:
         spec:
           imagePullSecrets:
@@ -19,7 +37,29 @@ spec:
           - name: collect-daily-prices
             image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.6
             imagePullPolicy: Always
-            command: ["sh", "-c", "python src/collect_daily_prices.py && python src/collect_oil_market_prices.py"]
+            # Prices (heizoel24) and market data (Yahoo/ECB/FRED) are independent
+            # feeds. With `&&` a market failure re-ran the whole container, price
+            # fetch included; now each step runs exactly once and the Job fails if
+            # either step fails.
+            command:
+            - sh
+            - -c
+            - |
+              rc=0
+              python src/collect_daily_prices.py || rc=1
+              python src/collect_oil_market_prices.py || rc=1
+              exit $rc
+            # Without requests the pod has no QoS class (BestEffort), which makes
+            # it the first eviction candidate under node pressure. yfinance +
+            # pandas need a few hundred MB; the limit is generous enough for the
+            # ECB history zip.
+            resources:
+              requests:
+                cpu: "250m"
+                memory: "512Mi"
+              limits:
+                cpu: "1"
+                memory: "2Gi"
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:

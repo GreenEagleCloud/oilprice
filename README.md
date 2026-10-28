@@ -805,6 +805,7 @@ kubectl apply -f k8s/frontend-service.yaml \
   -f k8s/training-cronjob.yaml \
   -f k8s/collect-cronjob.yaml \
   -f k8s/collect-rhein-cronjob.yaml \
+  -f k8s/pipeline-watch-cronjob.yaml \
   -f k8s/reference-grant.yaml \
   -f k8s/oilprice-httproute.yaml
 
@@ -824,6 +825,36 @@ Alle Sammler-/Pipeline-Jobs sind gegen Aufhängen geschützt:
   Der Job gilt erst als Fehler, wenn mindestens ein Schritt fehlgeschlagen ist.
 - `PYTHONUNBUFFERED=1` in allen vier CronJobs, damit `kubectl logs` den Fortschritt
   sofort zeigt (Python puffert stdout sonst, wenn kein TTY verbunden ist).
+- `failedJobsHistoryLimit: 5` (Default ist 1) und `successfulJobsHistoryLimit: 3`
+  auf `collect-daily-prices`, `collect-rhein` und `pipeline-watch`: beim Ausfall
+  2026-10-25..27 war der fehlgeschlagene Job des Vortags jeweils schon
+  überschrieben – aus einem Dreitage-Ausfall wurde in `kubectl get jobs` ein
+  einzelner schlechter Abend.
+- `concurrencyPolicy: Forbid` und `backoffLimit: 2` auf den beiden Sammlern:
+  zwei Collector-Läufe würden dieselbe `raw/oil_data.csv` lesen, mischen und
+  schreiben, und der kubelet-Backoff (10s, 20s, 40s …) behebt keinen Upstream-
+  Ausfall – am 2026-10-27 waren nach 7 Pods in 5m43s sieben S3-Reads und kein
+  Write.
+- `resources` (Requests/Limits) auf beiden Sammlern: ohne Requests hat der Pod
+  keine QoS-Klasse (BestEffort) und ist der erste Eviction-Kandidat.
+- `collect-daily-prices` führt Preis- und Markt-Sammlung unabhängig aus
+  (`|| rc=1` statt `&&`): ein Yahoo-/ECB-/FRED-Problem startet nicht mehr den
+  kompletten Container inklusive heizoel24-Preislauf.
+
+Verifizierter Ausfall und Behebung (2026-10-25 bis 2026-10-28):
+
+```text
+# collect-daily-prices-29885730 (2026-10-27 23:30:00 .. 23:35:43 UTC)
+condition=Failed reason=BackoffLimitExceeded   7 Pod-Versuche in 5m43s
+RGW-Zugriffe des Laufs: 7 GET raw/oil_data.csv, 0 PUT   -> kein Write, kein Backup
+Ursache: fetch_prices() in src/collect_daily_prices.py hatte keinen Retry
+(anders als die Yahoo-/ECB-/FRED-Abrufe in collect_oil_market_prices.py)
+
+# Behebung: Retry mit Backoff + Payload-Prüfung im Collector, dazu
+kubectl -n oilprice create job collect-manual-20261028 --from=cronjob/collect-daily-prices
+saved s3://oilprice-features/raw/oil_data.csv: 7054 rows, newest 2026-10-28
+/api/history -> Daten bis 2026-10-28 (Feature-Pipeline und Hopsworks-Upload danach ok)
+```
 
 Feature-Pipeline sofort auslösen, damit die Forward-Feature-Rows mit dem
 aktuellen `origin_date` aus dem S3-Rohdatensatz aktualisiert werden:
@@ -840,6 +871,24 @@ kubectl -n oilprice create job "collect-daily-manual-$(date +%Y%m%d%H%M%S)" \
   --from=cronjob/collect-daily-prices
 kubectl -n oilprice create job "collect-rhein-manual-$(date +%Y%m%d%H%M%S)" \
   --from=cronjob/collect-rhein
+```
+
+Ob die Kette wirklich gelaufen ist, prüft der Watchdog
+(`k8s/pipeline-watch-cronjob.yaml`, 07:00 UTC): er liest `lastSuccessfulTime`
+der drei Pipeline-CronJobs über die Kubernetes-API (Role+RoleBinding, nur
+`get`/`list` auf CronJobs in `oilprice`) und beendet den Job mit Exit 1, wenn
+ein Lauf älter als `WATCH_MAX_AGE_HOURS` (26h) ist. Der fehlgeschlagene Job ist
+das Signal – genau das fehlte 2026-10-25..27, als der Collector jede Nacht
+fiel, die Feature-Pipeline das letzte gute Rohdatum brav neu hochlud und das
+Frontend Preise vor Wochen anzeigte.
+
+```bash
+kubectl -n oilprice create job pipeline-watch-manual --from=cronjob/pipeline-watch
+kubectl -n oilprice logs job/pipeline-watch-manual
+# collect-daily-prices: last success 2026-10-28T12:43:43Z (0.5h ago)
+# collect-rhein: last success 2026-10-27T23:35:22Z (13.6h ago)
+# feature-pipeline: last success 2026-10-28T00:03:51Z (13.2h ago)
+# ok: every watched CronJob succeeded within 26.0h
 ```
 
 Erwartete Zeilen aus dem Feature-Lauf (Reihenfolge: Rhein → Markt → weekly → forward,

@@ -1,0 +1,204 @@
+# ---------------------------------------------------------------------------
+# Pipeline staleness watchdog
+#
+# The nightly chain (collect-daily-prices 23:30 -> collect-rhein 23:35 ->
+# feature-pipeline 00:00 -> training-pipeline 01:00) only ever reports the Job
+# that failed. Between 2026-10-25 and 2026-10-27 the collector failed every
+# night, the feature pipeline happily re-published the last good raw file, and
+# the frontend served prices weeks out of date - nothing anywhere said so.
+#
+# This CronJob reads .status.lastSuccessfulTime of the pipeline CronJobs and
+# exits non-zero when one of them has no successful run within
+# WATCH_MAX_AGE_HOURS. The failed Job is the alert: it stays visible in
+# `kubectl get jobs -n oilprice`, in the CronJob status and in the cluster
+# event stream that Flux reports on.
+#
+# No kubectl and no cluster-wide rights: the pod reads the CronJob status
+# through the Kubernetes API with its own ServiceAccount token, which the Role
+# below limits to reading CronJobs in the oilprice namespace. (Without that
+# Role the API answers 403 - verified with the first run of this watchdog.)
+#
+#   kubectl -n oilprice apply -f k8s/pipeline-watch-cronjob.yaml
+#   kubectl -n oilprice create job pipeline-watch-manual --from=cronjob/pipeline-watch
+#   kubectl -n oilprice logs job/pipeline-watch-manual
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pipeline-watch-cronjob-reader
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: pipeline-watch
+rules:
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-watch-cronjob-reader
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: pipeline-watch
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pipeline-watch-cronjob-reader
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: oilprice
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-watch-script
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: pipeline-watch
+data:
+  pipeline_watch.py: |
+    #!/usr/bin/env python3
+    """Fail loudly when a nightly pipeline CronJob has no recent successful run."""
+    import datetime
+    import json
+    import os
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+    CRONJOBS = [
+        name.strip()
+        for name in os.environ.get(
+            "WATCH_CRONJOBS",
+            "collect-daily-prices,collect-rhein,feature-pipeline",
+        ).split(",")
+        if name.strip()
+    ]
+    MAX_AGE_HOURS = float(os.environ.get("WATCH_MAX_AGE_HOURS", "26"))
+
+
+    def api_get(path):
+        with open(f"{SA_DIR}/token") as handle:
+            token = handle.read().strip()
+        request = urllib.request.Request(
+            f"https://kubernetes.default.svc{path}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        context = ssl.create_default_context(cafile=f"{SA_DIR}/ca.crt")
+        with urllib.request.urlopen(request, timeout=20, context=context) as response:
+            return json.loads(response.read().decode())
+
+
+    def parse(stamp):
+        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+
+
+    def main():
+        with open(f"{SA_DIR}/namespace") as handle:
+            namespace = handle.read().strip()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        stale = []
+        for name in CRONJOBS:
+            try:
+                status = api_get(
+                    f"/apis/batch/v1/namespaces/{namespace}/cronjobs/{name}"
+                ).get("status") or {}
+            except (urllib.error.URLError, OSError) as exc:
+                stale.append(f"{name}: API request failed: {exc}")
+                continue
+            last_success = status.get("lastSuccessfulTime")
+            last_schedule = status.get("lastScheduleTime")
+            if not last_success:
+                stale.append(
+                    f"{name}: no successful run recorded (lastScheduleTime={last_schedule})"
+                )
+                continue
+            age_hours = (now - parse(last_success)).total_seconds() / 3600
+            print(f"{name}: last success {last_success} ({age_hours:.1f}h ago)")
+            if age_hours > MAX_AGE_HOURS:
+                stale.append(
+                    f"{name}: last success {age_hours:.1f}h ago exceeds {MAX_AGE_HOURS}h"
+                )
+        if stale:
+            print("STALE PIPELINE:")
+            for problem in stale:
+                print(f"  - {problem}")
+            return 1
+        print(f"ok: every watched CronJob succeeded within {MAX_AGE_HOURS}h")
+        return 0
+
+
+    if __name__ == "__main__":
+        raise SystemExit(main())
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pipeline-watch
+  namespace: oilprice
+  labels:
+    app: oilprice
+    purpose: pipeline-watch
+spec:
+  # 07:00 UTC: the whole nightly chain (23:30 / 23:35 / 00:00 / 01:00) has had
+  # its chance and the frontend is already serving the day's numbers.
+  schedule: "0 7 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  # A watchdog that itself stops running must be visible too.
+  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: oilprice
+            purpose: pipeline-watch
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: pipeline-watch
+            image: python:3.12-slim
+            command: ["python", "-u", "/app/pipeline_watch.py"]
+            resources:
+              requests:
+                cpu: "50m"
+                memory: "64Mi"
+              limits:
+                cpu: "200m"
+                memory: "128Mi"
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
+              seccompProfile:
+                type: RuntimeDefault
+            env:
+            # 26h = one daily cycle plus slack: a single late run is not an
+            # alert, a missing day always is.
+            - name: WATCH_MAX_AGE_HOURS
+              value: "26"
+            - name: WATCH_CRONJOBS
+              value: "collect-daily-prices,collect-rhein,feature-pipeline"
+            volumeMounts:
+            - name: script
+              mountPath: /app/pipeline_watch.py
+              subPath: pipeline_watch.py
+              readOnly: true
+          volumes:
+          - name: script
+            configMap:
+              name: pipeline-watch-script

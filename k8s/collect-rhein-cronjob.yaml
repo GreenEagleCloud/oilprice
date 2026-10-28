@@ -7,9 +7,20 @@ spec:
   # daily at 23:35, after collect-daily-prices (23:30) and before the
   # feature pipeline (00:00) that reads raw/rhein_*.csv from S3
   schedule: "35 23 * * *"
+  # Two overlapping collectors would write the same raw/rhein_*.csv objects.
+  concurrencyPolicy: Forbid
+  # Emit an event if the job cannot start within 30 min of its scheduled time.
+  startingDeadlineSeconds: 1800
+  # Default failedJobsHistoryLimit is 1 - failed runs disappear before anyone
+  # looks. Keep enough history to tell "one bad night" from "the feed is down".
+  failedJobsHistoryLimit: 5
+  successfulJobsHistoryLimit: 3
   jobTemplate:
     spec:
       activeDeadlineSeconds: 1800
+      # The three steps already run independently and each collector retries its
+      # own upstream; a pod that still fails is not fixed by kubelet backoff.
+      backoffLimit: 2
       template:
         spec:
           imagePullSecrets:
@@ -33,6 +44,16 @@ spec:
               python src/collect_rhein_cargo.py || rc=1
               python src/collect_rhein_kaub_history.py || rc=1
               exit $rc
+            # Without requests the pod has no QoS class (BestEffort), which makes
+            # it the first eviction candidate under node pressure. PDF parsing of
+            # the cargo bulletins is the heaviest step here.
+            resources:
+              requests:
+                cpu: "250m"
+                memory: "512Mi"
+              limits:
+                cpu: "1"
+                memory: "2Gi"
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
