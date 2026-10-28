@@ -15,7 +15,7 @@ Zieltermine, die noch keinen Wochen-Feature-Row haben.
 | Bereich | Zustand |
 | --- | --- |
 | Live | `https://oilprice.greeneagle.ai/` (Frontend → `inference-service`) |
-| Images | `oilprice-frontend:1.16`, `oilprice-inference:1.12`, `oilprice-pipelines:2.6` |
+| Images | `oilprice-frontend:1.16`, `oilprice-inference:1.12`, `oilprice-pipelines:2.7` |
 | Feature Groups | `heizoel24` v3, `heizoel24_forward` v2, `rhein_level` v1, `rhein_cargo` v1, `oil_market` v1 – alle online-enabled |
 | Feature Views | `heizoel24_weekly` v4 (25 Modell-Features + Label), `heizoel24_forward_forecast` v3 (24 Features + `origin_date`-Anker), `rhein_level_daily` v1, `rhein_cargo_monthly` v1, `oil_market_daily` v1 |
 | Model Registry | `oil_price_model` v23 (Level-MSE 1.52, 23 Features, Legacy-Sidecar), `oil_price_forward_model` v23 (24 Features, skill_vs_persistence 0.964) |
@@ -762,12 +762,12 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 `https://oilprice.greeneagle.ai/` erreichbar. Die HTTPRoute verweist auf
 `frontend-service`, und das Frontend ruft intern `inference-service` auf.
 
-Aktuelle Images (Stand 2026-10-25, gebaut mit Kaniko im Cluster):
+Aktuelle Images (Stand 2026-10-28, gebaut mit Kaniko im Cluster):
 
 ```text
 ghcr.io/greeneaglecloud/oilprice-frontend:1.16
 ghcr.io/greeneaglecloud/oilprice-inference:1.12
-ghcr.io/greeneaglecloud/oilprice-pipelines:2.6
+ghcr.io/greeneaglecloud/oilprice-pipelines:2.7
 ```
 
 Tägliche Kette (Zeiten UTC, alle Jobs mit `activeDeadlineSeconds` und
