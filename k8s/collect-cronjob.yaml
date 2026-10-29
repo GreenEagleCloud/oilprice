@@ -4,8 +4,20 @@ metadata:
   name: collect-daily-prices
   namespace: oilprice
 spec:
-  # daily at 23:30, before the feature pipeline (00:00) and training pipeline (01:00)
-  schedule: "30 23 * * *"
+  # Twice a day - 13:30 and 23:30 UTC - both before the feature pipeline (00:00)
+  # and the training pipeline (01:00).
+  #
+  # heizoel24 publishes the price of the current day during CEST daytime (seen
+  # on 2026-10-28 already at 12:43 UTC, on 2026-10-29 at 08:09 UTC), but the
+  # feed already carries a row for the next day with an empty price. A single
+  # run at 23:30 UTC (= 01:30 CEST) therefore always stored the day that had
+  # just ended, and the frontend showed yesterday for the whole of today.
+  #
+  # The 13:30 UTC run (15:30 CEST) publishes the current day while the day is
+  # still running; the 23:30 UTC run re-reads the same 3-month window and
+  # overwrites the intraday value with the final one, because merge() lets the
+  # freshly fetched row win on overlapping dates. Both runs are idempotent.
+  schedule: "30 13,23 * * *"
   # Two overlapping collectors would both read, merge and write
   # s3://oilprice-features/raw/oil_data.csv.
   concurrencyPolicy: Forbid
