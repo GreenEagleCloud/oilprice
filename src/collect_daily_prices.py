@@ -222,9 +222,11 @@ def main():
 
     added = len(merged) - (0 if existing is None else len(existing))
     if added <= 0:
-        # The feed answered but brought nothing new: the training file would age
-        # silently, which is exactly how the frontend ended up showing old prices.
-        print(f"WARNING: no new price records in this run (newest fetched date {new['date'].iloc[-1]})")
+        # Nothing new is only suspicious when the newest date itself lags behind
+        # the clock, and warn_if_stale already says that out loud. Calling every
+        # run that found the file already current a WARNING made a healthy run
+        # look like a failed one.
+        print(f"no new price records: newest fetched date {new['date'].iloc[-1]} is already stored")
     save_data_to_s3(merged, BUCKET, KEY)
     print(f"saved s3://{BUCKET}/{KEY}: {len(merged)} rows ({added} new records), newest {merged['date'].iloc[-1]}")
 

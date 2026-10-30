@@ -21,7 +21,7 @@ Zieltermine, die noch keinen Wochen-Feature-Row haben.
 | Model Registry | `oil_price_model` v23 (Level-MSE 1.52, 23 Features, Legacy-Sidecar), `oil_price_forward_model` v23 (24 Features, skill_vs_persistence 0.964) |
 | Wochen-Gate | letzter Lauf blockiert: overall 1.058, volatile Wochen 1.032 (gefordert < 1.0) → v23 bleibt im Serving stehen |
 | Forward-Gate | bestanden: 0.964; nach Horizont 1–7d 1.007, 8–30d 0.989, 31–60d 0.954, 61–90d 0.922 |
-| CronJobs (UTC) | `collect-daily-prices` 13:30 + 23:30, `collect-rhein` 23:35, `feature-pipeline` 00:00, `training-pipeline` 01:00 |
+| CronJobs (UTC) | `collect-daily-prices` 08:30 + 13:30 + 23:30, `collect-rhein` 23:35, `feature-pipeline` 00:00, `training-pipeline` 01:00 |
 | Tests | `181 passed` (`python -m pytest tests -q`) |
 
 Der Wochenlauf ist gegen die Persistence-Baseline **nicht** promotionswürdig, solange
@@ -775,7 +775,7 @@ Tägliche Kette (Zeiten UTC, alle Jobs mit `activeDeadlineSeconds` und
 
 | CronJob | Schedule | Was läuft |
 | --- | --- | --- |
-| `collect-daily-prices` | `30 23 * * *` | Preise (`collect_daily_prices.py`) + Markt (`collect_oil_market_prices.py`) → S3 |
+| `collect-daily-prices` | `30 8,13,23 * * *` | Preise (`collect_daily_prices.py`) + Markt (`collect_oil_market_prices.py`) → S3 |
 | `collect-rhein` | `35 23 * * *` | Pegel, Fracht und Kaub-Archiv → S3 (drei unabhängige Schritte) |
 | `feature-pipeline` | `0 0 * * *` | `hw_rhein_feature_pipeline` → `hw_oil_market_feature_pipeline` → `hw_feature_pipeline` → `hw_forward_feature_pipeline` |
 | `training-pipeline` | `0 1 * * *` | `hw_training_pipeline` dann `hw_forward_training_pipeline`; Exit 2 = Gate blockiert, kein Job-Fehler |
