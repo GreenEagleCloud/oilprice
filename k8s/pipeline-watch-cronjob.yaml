@@ -1,17 +1,23 @@
 # ---------------------------------------------------------------------------
 # Pipeline staleness watchdog
 #
-# The nightly chain (collect-daily-prices 23:30 -> collect-rhein 23:35 ->
-# feature-pipeline 00:00 -> training-pipeline 01:00) only ever reports the Job
-# that failed. Between 2026-10-25 and 2026-10-27 the collector failed every
-# night, the feature pipeline happily re-published the last good raw file, and
-# the frontend served prices weeks out of date - nothing anywhere said so.
+# The nightly chain (collect-daily-prices 08:30 / 13:30 / 23:30 ->
+# collect-rhein 23:35 -> feature-pipeline 00:00 -> training-pipeline 01:00)
+# only ever reports the Job that failed. Between 2026-10-25 and 2026-10-27 the
+# collector failed every night, the feature pipeline happily re-published the
+# last good raw file, and the frontend served prices weeks out of date -
+# nothing anywhere said so.
 #
-# This CronJob reads .status.lastSuccessfulTime of the pipeline CronJobs and
-# exits non-zero when one of them has no successful run within
-# WATCH_MAX_AGE_HOURS. The failed Job is the alert: it stays visible in
-# `kubectl get jobs -n oilprice`, in the CronJob status and in the cluster
-# event stream that Flux reports on.
+# This CronJob checks two things and exits non-zero when either one fails:
+#   1. .status.lastSuccessfulTime of the pipeline CronJobs is within
+#      WATCH_MAX_AGE_HOURS.
+#   2. the newest date the frontend actually serves (/api/history) is within
+#      WATCH_DATA_MAX_AGE_HOURS. A chain can succeed every night and still
+#      bring nothing new - that is what happened on 2026-10-29, when every Job
+#      was green while the current day was missing.
+# The failed Job is the alert: it stays visible in `kubectl get jobs -n
+# oilprice`, in the CronJob status and in the cluster event stream that Flux
+# reports on.
 #
 # No kubectl and no cluster-wide rights: the pod reads the CronJob status
 # through the Kubernetes API with its own ServiceAccount token, which the Role
@@ -81,6 +87,12 @@ data:
         if name.strip()
     ]
     MAX_AGE_HOURS = float(os.environ.get("WATCH_MAX_AGE_HOURS", "26"))
+    # The newest date the frontend really serves. The collector runs at 08:30,
+    # 13:30 and 23:30 UTC, so by 15:30 UTC the current day has to be in there.
+    DATA_URL = os.environ.get(
+        "WATCH_DATA_URL", "http://frontend-service.oilprice.svc:5000/api/history"
+    )
+    DATA_MAX_AGE_HOURS = float(os.environ.get("WATCH_DATA_MAX_AGE_HOURS", "36"))
 
 
     def api_get(path):
@@ -97,6 +109,22 @@ data:
 
     def parse(stamp):
         return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+
+
+    def newest_served_date():
+        """Newest date the frontend serves, or None when it cannot be read.
+
+        /api/history is where the whole chain - collector, S3 file, frontend
+        cache - lands in one number, so it is what the user actually sees.
+        """
+        try:
+            with urllib.request.urlopen(DATA_URL, timeout=20) as response:
+                dates = json.loads(response.read().decode()).get("dates") or []
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+        if not dates:
+            return None
+        return str(dates[-1])
 
 
     def main():
@@ -125,12 +153,30 @@ data:
                 stale.append(
                     f"{name}: last success {age_hours:.1f}h ago exceeds {MAX_AGE_HOURS}h"
                 )
+        newest = newest_served_date()
+        if newest is None:
+            print(f"WARNING: {DATA_URL} not readable - data freshness not checked")
+        else:
+            served = datetime.datetime.strptime(newest, "%Y-%m-%d").replace(
+                tzinfo=datetime.timezone.utc
+            )
+            age_hours = (now - served).total_seconds() / 3600
+            print(f"frontend serves newest date {newest} ({age_hours:.1f}h old)")
+            if age_hours > DATA_MAX_AGE_HOURS:
+                stale.append(
+                    f"data: newest served date {newest} is {age_hours:.1f}h old, "
+                    f"exceeds {DATA_MAX_AGE_HOURS}h"
+                )
+
         if stale:
             print("STALE PIPELINE:")
             for problem in stale:
                 print(f"  - {problem}")
             return 1
-        print(f"ok: every watched CronJob succeeded within {MAX_AGE_HOURS}h")
+        print(
+            f"ok: every watched CronJob succeeded within {MAX_AGE_HOURS}h and "
+            f"the served data is within {DATA_MAX_AGE_HOURS}h"
+        )
         return 0
 
 
@@ -146,9 +192,12 @@ metadata:
     app: oilprice
     purpose: pipeline-watch
 spec:
-  # 07:00 UTC: the whole nightly chain (23:30 / 23:35 / 00:00 / 01:00) has had
-  # its chance and the frontend is already serving the day's numbers.
-  schedule: "0 7 * * *"
+  # 15:30 UTC (17:30 CEST): the nightly chain (23:30 / 23:35 / 00:00 / 01:00)
+  # and both daytime collector runs (08:30 / 13:30) have had their chance, so
+  # the current day must be served by now. Late in the day is also the only
+  # time when "the feed brought nothing new" can be told apart from "the day is
+  # simply not over yet".
+  schedule: "30 15 * * *"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 1800
   # A watchdog that itself stops running must be visible too.
@@ -193,6 +242,10 @@ spec:
               value: "26"
             - name: WATCH_CRONJOBS
               value: "collect-daily-prices,collect-rhein,feature-pipeline"
+            # 36h at 15:30 UTC: the current day (0h old) and yesterday (24h)
+            # pass, a day that stopped advancing (48h) always fails.
+            - name: WATCH_DATA_MAX_AGE_HOURS
+              value: "36"
             volumeMounts:
             - name: script
               mountPath: /app/pipeline_watch.py
