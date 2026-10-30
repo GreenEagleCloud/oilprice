@@ -874,21 +874,27 @@ kubectl -n oilprice create job "collect-rhein-manual-$(date +%Y%m%d%H%M%S)" \
 ```
 
 Ob die Kette wirklich gelaufen ist, prüft der Watchdog
-(`k8s/pipeline-watch-cronjob.yaml`, 07:00 UTC): er liest `lastSuccessfulTime`
-der drei Pipeline-CronJobs über die Kubernetes-API (Role+RoleBinding, nur
-`get`/`list` auf CronJobs in `oilprice`) und beendet den Job mit Exit 1, wenn
-ein Lauf älter als `WATCH_MAX_AGE_HOURS` (26h) ist. Der fehlgeschlagene Job ist
-das Signal – genau das fehlte 2026-10-25..27, als der Collector jede Nacht
-fiel, die Feature-Pipeline das letzte gute Rohdatum brav neu hochlud und das
-Frontend Preise vor Wochen anzeigte.
+(`k8s/pipeline-watch-cronjob.yaml`, 15:30 UTC) auf zwei Arten: Er liest
+`lastSuccessfulTime` der drei Pipeline-CronJobs über die Kubernetes-API
+(Role+RoleBinding, nur `get`/`list` auf CronJobs in `oilprice`) und beendet den
+Job mit Exit 1, wenn ein Lauf älter als `WATCH_MAX_AGE_HOURS` (26h) ist – und
+seit 2026-10-30 prüft er zusätzlich das neueste Datum, das der Frontend unter
+`/api/history` ausliefert, gegen `WATCH_DATA_MAX_AGE_HOURS` (36h). Der
+fehlgeschlagene Job ist das Signal – genau das fehlte 2026-10-25..27, als der
+Collector jede Nacht fiel, die Feature-Pipeline das letzte gute Rohdatum brav
+neu hochlud und das Frontend Preise vor Wochen anzeigte. Der Frische-Check kam
+nach dem 2026-10-29 dazu, an dem alle Jobs grün waren und trotzdem der aktuelle
+Tag fehlte. Um 15:30 UTC (17:30 CEST) muss der aktuelle Tag draußen sein, weil
+dann alle vier Läufe (08:30, 13:30, 23:30, 00:00) ihre Chance hatten.
 
 ```bash
 kubectl -n oilprice create job pipeline-watch-manual --from=cronjob/pipeline-watch
 kubectl -n oilprice logs job/pipeline-watch-manual
-# collect-daily-prices: last success 2026-10-28T12:43:43Z (0.5h ago)
-# collect-rhein: last success 2026-10-27T23:35:22Z (13.6h ago)
-# feature-pipeline: last success 2026-10-28T00:03:51Z (13.2h ago)
-# ok: every watched CronJob succeeded within 26.0h
+# collect-daily-prices: last success 2026-10-30T08:33:18Z (0.1h ago)
+# collect-rhein: last success 2026-10-29T23:35:23Z (9.1h ago)
+# feature-pipeline: last success 2026-10-30T00:03:37Z (8.6h ago)
+# frontend serves newest date 2026-10-30 (8.6h old)
+# ok: every watched CronJob succeeded within 26.0h and the served data is within 36.0h
 ```
 
 Erwartete Zeilen aus dem Feature-Lauf (Reihenfolge: Rhein → Markt → weekly → forward,
