@@ -762,12 +762,12 @@ Die Anwendung läuft im Namespace `oilprice` und ist über den Gateway-Host
 `https://oilprice.greeneagle.ai/` erreichbar. Die HTTPRoute verweist auf
 `frontend-service`, und das Frontend ruft intern `inference-service` auf.
 
-Aktuelle Images (Stand 2026-10-28, gebaut mit Kaniko im Cluster):
+Aktuelle Images (Stand 2026-10-31, gebaut mit Kaniko im Cluster):
 
 ```text
 ghcr.io/greeneaglecloud/oilprice-frontend:1.16
 ghcr.io/greeneaglecloud/oilprice-inference:1.12
-ghcr.io/greeneaglecloud/oilprice-pipelines:2.7
+ghcr.io/greeneaglecloud/oilprice-pipelines:2.8
 ```
 
 Tägliche Kette (Zeiten UTC, alle Jobs mit `activeDeadlineSeconds` und

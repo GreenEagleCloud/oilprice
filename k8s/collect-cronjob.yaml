@@ -49,7 +49,7 @@ spec:
           - name: ghcr-credentials-e8207fde-aef2-4adb-81c6-5e3e678d44b6
           containers:
           - name: collect-daily-prices
-            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.7
+            image: ghcr.io/greeneaglecloud/oilprice-pipelines:2.8
             imagePullPolicy: Always
             # Prices (heizoel24) and market data (Yahoo/ECB/FRED) are independent
             # feeds. With `&&` a market failure re-ran the whole container, price
